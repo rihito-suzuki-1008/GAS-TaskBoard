@@ -4,6 +4,30 @@
       return notStarted ? notStarted.id : '';
     }
 
+    function makeLocalNode(config) {
+      const now = nowIsoLocal();
+      return {
+        id: config.id,
+        parentId: config.parentId,
+        name: cleanText(config.name),
+        statusColumnId: config.statusColumnId || defaultCreateStatusId() || (state.statusColumns[0] && state.statusColumns[0].id) || '',
+        assigneeIds: (config.assigneeIds || []).slice(),
+        priority: config.priority || 'Mid',
+        startDate: config.startDate || '',
+        endDate: config.endDate || '',
+        description: config.description || '',
+        sortOrder: config.sortOrder !== undefined ? config.sortOrder : nextLocalNodeSortOrder(config.parentId),
+        createdAt: now,
+        updatedAt: '',
+        updatedBy: state.currentMember ? state.currentMember.id : '',
+        progress: 0,
+        displayStartDate: config.startDate || '',
+        displayEndDate: config.endDate || '',
+        hasChildren: false,
+        isLeaf: true
+      };
+    }
+
     function openNodeCreateDialog(parentId, statusColumnId) {
       if (!state.currentMember) {
         showToast('メンバー未登録のため保存不可', 'error');
@@ -27,34 +51,41 @@
     async function createNodeFromDialog() {
       const dialog = state.dialog;
       if (!dialog || dialog.type !== 'node') return;
-      if (dialog.submitting) return;
       const draft = dialog.draft;
       if (!draft.name.trim()) {
         showToast('名称を入力', 'error');
         return;
       }
-      dialog.submitting = true;
-      render();
-      try {
-        const result = await serverCall('addNode', {
-          parentId: draft.parentId,
-          name: draft.name,
-          statusColumnId: draft.statusColumnId,
-          priority: draft.priority,
-          assigneeIds: draft.assigneeIds,
-          startDate: draft.startDate,
-          endDate: draft.endDate,
-          requestId: nextRequestId()
-        });
-        dialog.submitting = false;
-        closeDialog(false);
-        applyMutationResult(result);
-      } catch (error) {
-        dialog.submitting = false;
-        state.syncStatus = 'error';
-        showToast(error.message, 'error');
-        render();
-      }
+      const nodeId = newClientId('node');
+      const node = makeLocalNode({
+        id: nodeId,
+        parentId: draft.parentId,
+        name: draft.name,
+        statusColumnId: draft.statusColumnId,
+        priority: draft.priority,
+        assigneeIds: draft.assigneeIds,
+        startDate: draft.startDate,
+        endDate: draft.endDate
+      });
+      closeDialog(false);
+      queueNodeMutation(nodeId, 'addNode', () => ({
+        nodeId,
+        parentId: node.parentId,
+        name: node.name,
+        statusColumnId: node.statusColumnId,
+        priority: node.priority,
+        assigneeIds: node.assigneeIds,
+        startDate: node.startDate,
+        endDate: node.endDate
+      }), () => {
+        state.nodes.push(node);
+        state.collapsed.delete(node.parentId);
+      }, {
+        rollback: () => {
+          state.nodes = state.nodes.filter(item => item.id !== nodeId);
+          if (state.drawerNodeId === nodeId) closeDrawer({ skipShellCleanup: true });
+        }
+      });
     }
 
     function openStatusDialog(columnId) {
@@ -77,18 +108,39 @@
     }
 
     async function saveStatusFromDialog() {
-      const draft = state.dialog.draft;
+      const draft = { ...state.dialog.draft };
       if (!draft.name.trim()) {
         showToast('列名を入力', 'error');
         return;
       }
-      await callAndApply('upsertStatusColumn', {
+      const previousColumns = cloneValue(state.statusColumns);
+      const existing = draft.columnId ? state.statusById.get(draft.columnId) : null;
+      const columnId = existing ? existing.id : newClientId('status');
+      const optimisticColumn = {
+        id: columnId,
+        name: cleanText(draft.name),
+        sortOrder: existing ? existing.sortOrder : nextLocalStatusSortOrder(),
+        isDoneColumn: existing && existing.isDoneColumn && !draft.isDoneColumn ? true : Boolean(draft.isDoneColumn),
+        color: normalizeHex(draft.color) || defaultStatusColor({ name: draft.name, isDoneColumn: draft.isDoneColumn })
+      };
+      closeDialog(false);
+      queueBackgroundMutation('statusColumns', 'upsertStatusColumn', {
         columnId: draft.columnId,
+        clientColumnId: existing ? '' : columnId,
         name: draft.name,
-        sortOrder: draft.sortOrder,
+        sortOrder: optimisticColumn.sortOrder,
         isDoneColumn: draft.isDoneColumn,
         color: draft.color
-      }, () => closeDialog(false));
+      }, () => {
+        if (optimisticColumn.isDoneColumn) {
+          state.statusColumns.forEach(column => { column.isDoneColumn = column.id === columnId; });
+        }
+        const index = state.statusColumns.findIndex(column => column.id === columnId);
+        if (index === -1) state.statusColumns.push(optimisticColumn);
+        else state.statusColumns[index] = optimisticColumn;
+      }, () => {
+        state.statusColumns = previousColumns;
+      });
     }
 
     async function reorderStatusColumn(sourceId, targetId, before) {
@@ -106,23 +158,17 @@
       const newSort = prev && next ? (prev.sortOrder + next.sortOrder) / 2 : prev ? prev.sortOrder + 1000 : next ? next.sortOrder - 1000 : 1000;
       if (newSort === source.sortOrder) return;
 
-      // Reflect the new order in the browser immediately; the spreadsheet write
-      // happens in the background so dropping a column doesn't feel like it's
-      // waiting on a round trip. Roll back only if the write itself fails.
-      const previousSort = source.sortOrder;
-      source.sortOrder = newSort;
-      rebuildIndexes();
-      render();
-
-      await callAndApply('upsertStatusColumn', {
+      const previousColumns = cloneValue(state.statusColumns);
+      queueBackgroundMutation('statusColumns', 'upsertStatusColumn', {
         columnId: source.id,
         name: source.name,
         sortOrder: newSort,
         isDoneColumn: source.isDoneColumn,
         color: source.color
-      }, null, () => {
-        source.sortOrder = previousSort;
-        rebuildIndexes();
+      }, () => {
+        source.sortOrder = newSort;
+      }, () => {
+        state.statusColumns = previousColumns;
       });
     }
 
@@ -136,7 +182,23 @@
     async function deleteStatusConfirmed() {
       const columnId = state.dialog && state.dialog.columnId;
       if (!columnId) return;
-      await callAndApply('deleteStatusColumn', { columnId }, () => closeDialog(false));
+      const column = state.statusById.get(columnId);
+      if (!column) return;
+      if (column.isDoneColumn) {
+        showToast('完了列は削除できません', 'error');
+        return;
+      }
+      if (state.nodes.some(node => node.statusColumnId === columnId)) {
+        showToast('この列に所属するノードがあります', 'error');
+        return;
+      }
+      const previousColumns = cloneValue(state.statusColumns);
+      closeDialog(false);
+      queueBackgroundMutation('statusColumns', 'deleteStatusColumn', { columnId }, () => {
+        state.statusColumns = state.statusColumns.filter(item => item.id !== columnId);
+      }, () => {
+        state.statusColumns = previousColumns;
+      });
     }
 
     function openMembersDialog() {
@@ -148,18 +210,34 @@
     }
 
     async function saveMemberFromDialog() {
-      const draft = state.dialog.draft;
+      const draft = { ...state.dialog.draft };
       if (!draft.name.trim() || !draft.email.trim()) {
         showToast('氏名とメールを入力', 'error');
         return;
       }
-      await callAndApply('upsertMember', {
+      const previousMembers = cloneValue(state.members);
+      const memberId = draft.memberId || newClientId('member');
+      const optimisticMember = {
+        id: memberId,
+        name: cleanText(draft.name),
+        email: normalizeClientEmail(draft.email),
+        color: normalizeHex(draft.color) || defaultMemberColor()
+      };
+      queueBackgroundMutation('members', 'upsertMember', {
         memberId: draft.memberId,
+        clientMemberId: draft.memberId ? '' : memberId,
         name: draft.name,
         email: draft.email,
         color: draft.color
       }, () => {
-        state.dialog.draft = { memberId: '', name: '', email: '', color: defaultMemberColor() };
+        const index = state.members.findIndex(member => member.id === memberId);
+        if (index === -1) state.members.push(optimisticMember);
+        else state.members[index] = optimisticMember;
+        if (state.dialog && state.dialog.type === 'members') {
+          state.dialog.draft = { memberId: '', name: '', email: '', color: defaultMemberColor() };
+        }
+      }, () => {
+        state.members = previousMembers;
       });
     }
 
@@ -200,10 +278,26 @@
         showToast('自分自身の削除確認が必要', 'warning');
         return;
       }
-      await callAndApply('deleteMember', {
-        memberId: dialog.memberId,
+      if (state.members.length <= 1) {
+        showToast('最後の1人のメンバーは削除できません', 'error');
+        return;
+      }
+      const memberId = dialog.memberId;
+      const previousMembers = cloneValue(state.members);
+      const previousNodes = cloneValue(state.nodes);
+      closeDialog(false);
+      queueBackgroundMutation('members', 'deleteMember', {
+        memberId,
         confirmSelf: Boolean(dialog.confirmSelf)
-      }, () => closeDialog(false));
+      }, () => {
+        state.members = state.members.filter(member => member.id !== memberId);
+        state.nodes.forEach(node => {
+          node.assigneeIds = (node.assigneeIds || []).filter(id => id !== memberId);
+        });
+      }, () => {
+        state.members = previousMembers;
+        state.nodes = previousNodes;
+      });
     }
 
     function openNode(nodeId, options = {}) {
@@ -257,33 +351,43 @@
       const parent = state.nodesById.get(parentId);
       if (!parent) return;
       state.creatingShell = true;
-      state.syncStatus = 'pending';
-      render();
-      try {
-        const result = await serverCall('addNode', {
-          parentId,
-          name: '',
-          isShell: true,
-          statusColumnId: defaultCreateStatusId(),
-          priority: 'Mid',
-          assigneeIds: state.currentMember ? [state.currentMember.id] : [],
-          startDate: options.startDate || '',
-          endDate: options.endDate || '',
-          requestId: nextRequestId()
-        });
+      const nodeId = newClientId('node');
+      const node = makeLocalNode({
+        id: nodeId,
+        parentId,
+        name: '',
+        statusColumnId: defaultCreateStatusId(),
+        priority: 'Mid',
+        assigneeIds: state.currentMember ? [state.currentMember.id] : [],
+        startDate: options.startDate || '',
+        endDate: options.endDate || ''
+      });
+      queueNodeMutation(nodeId, 'addNode', () => ({
+        nodeId,
+        parentId,
+        name: '',
+        isShell: true,
+        statusColumnId: node.statusColumnId,
+        priority: node.priority,
+        assigneeIds: node.assigneeIds,
+        startDate: node.startDate,
+        endDate: node.endDate
+      }), () => {
         state.creatingShell = false;
+        state.nodes.push(node);
         state.collapsed.delete(parentId);
-        applyMutationResult(result);
-        const nodeId = result.createdNodeId;
-        if (nodeId) {
-          openNode(nodeId, { shell: true, focusName: true });
+        state.drawerNodeId = nodeId;
+        initializeDetailDraft(node);
+        state.shellNodeId = nodeId;
+        state.shellBaseline = detailSnapshotFromNode(node);
+        state.focusDetailName = true;
+      }, {
+        rollback: () => {
+          state.nodes = state.nodes.filter(item => item.id !== nodeId);
+          if (state.drawerNodeId === nodeId) closeDrawer({ skipShellCleanup: true });
+          clearShellTracking();
         }
-      } catch (error) {
-        state.creatingShell = false;
-        state.syncStatus = 'error';
-        showToast(error.message, 'error');
-        render();
-      }
+      });
     }
 
     function prepareShellCloseAction() {
@@ -332,14 +436,16 @@
     }
 
     async function deleteShellNode(nodeId) {
-      try {
-        const result = await serverCall('deleteNode', { nodeId, requestId: nextRequestId() });
-        applyMutationResult(result);
-      } catch (error) {
-        state.syncStatus = 'error';
-        showToast(error.message, 'error');
-        render();
-      }
+      const targetIds = [nodeId].concat(collectDescendants(nodeId));
+      const removed = state.nodes.filter(node => targetIds.includes(node.id)).map(cloneNode);
+      queueNodeMutation(nodeId, 'deleteNode', () => ({ nodeId }), () => {
+        state.nodes = state.nodes.filter(node => !targetIds.includes(node.id));
+      }, {
+        snapshot: () => removed,
+        rollback: snapshot => {
+          mergeNodes(snapshot || []);
+        }
+      });
     }
 
     function clearShellTracking() {
@@ -467,10 +573,26 @@
     }
 
     function fitChildren(nodeId) {
+      const node = state.nodesById.get(nodeId);
+      const scheduled = collectDescendants(nodeId)
+        .map(id => state.nodesById.get(id))
+        .filter(item => item && item.startDate && item.endDate);
+      if (!node || !scheduled.length) {
+        showToast('子孫に日付が設定されたタスクがありません', 'warning');
+        return;
+      }
+      const startDate = scheduled.map(item => item.startDate).sort()[0];
+      const ends = scheduled.map(item => item.endDate).sort();
+      const endDate = ends[ends.length - 1];
       queueNodeMutation(nodeId, 'fitNodeToChildren', () => ({
         nodeId,
         baseUpdatedAt: currentUpdatedAt(nodeId)
-      }));
+      }), () => {
+        node.startDate = startDate;
+        node.endDate = endDate;
+        node.displayStartDate = startDate;
+        node.displayEndDate = endDate;
+      });
     }
 
     function confirmNodeDelete(nodeId) {
@@ -487,9 +609,17 @@
     async function deleteNodeConfirmed() {
       const nodeId = state.dialog && state.dialog.nodeId;
       if (!nodeId) return;
-      await callAndApply('deleteNode', { nodeId, requestId: nextRequestId() }, () => {
-        closeDialog(false);
-        if (state.drawerNodeId === nodeId) closeDrawer({ skipShellCleanup: true });
+      const targetIds = [nodeId].concat(collectDescendants(nodeId));
+      const removed = state.nodes.filter(node => targetIds.includes(node.id)).map(cloneNode);
+      closeDialog(false);
+      if (state.drawerNodeId === nodeId) closeDrawer({ skipShellCleanup: true });
+      queueNodeMutation(nodeId, 'deleteNode', () => ({ nodeId }), () => {
+        state.nodes = state.nodes.filter(node => !targetIds.includes(node.id));
+      }, {
+        snapshot: () => removed,
+        rollback: snapshot => {
+          mergeNodes(snapshot || []);
+        }
       });
     }
 
@@ -497,8 +627,12 @@
       const node = state.nodesById.get(state.drawerNodeId);
       const predecessorId = dependencyDraft().predecessorId;
       if (!node || !predecessorId) return;
-      await callAndApply('addDependency', { predecessorId, successorId: node.id, requestId: nextRequestId() }, () => {
+      const dependencyId = newClientId('dependency');
+      queueBackgroundMutation('dependencies', 'addDependency', { dependencyId, predecessorId, successorId: node.id }, () => {
+        state.dependencies.push({ id: dependencyId, predecessorId, successorId: node.id });
         dependencyDraft().predecessorId = '';
+      }, () => {
+        state.dependencies = state.dependencies.filter(dep => dep.id !== dependencyId);
       });
     }
 
@@ -506,8 +640,12 @@
       const node = state.nodesById.get(state.drawerNodeId);
       const successorId = dependencyDraft().successorId;
       if (!node || !successorId) return;
-      await callAndApply('addDependency', { predecessorId: node.id, successorId, requestId: nextRequestId() }, () => {
+      const dependencyId = newClientId('dependency');
+      queueBackgroundMutation('dependencies', 'addDependency', { dependencyId, predecessorId: node.id, successorId }, () => {
+        state.dependencies.push({ id: dependencyId, predecessorId: node.id, successorId });
         dependencyDraft().successorId = '';
+      }, () => {
+        state.dependencies = state.dependencies.filter(dep => dep.id !== dependencyId);
       });
     }
 
@@ -519,7 +657,13 @@
     async function deleteDependencyConfirmed() {
       const dependencyId = state.dialog && state.dialog.dependencyId;
       if (!dependencyId) return;
-      await callAndApply('deleteDependency', { dependencyId, requestId: nextRequestId() }, () => closeDialog(false));
+      const previousDependencies = cloneValue(state.dependencies);
+      closeDialog(false);
+      queueBackgroundMutation('dependencies', 'deleteDependency', { dependencyId }, () => {
+        state.dependencies = state.dependencies.filter(dep => dep.id !== dependencyId);
+      }, () => {
+        state.dependencies = previousDependencies;
+      });
     }
 
     function saveNodePatch(nodeId, patch, optimisticApply) {
@@ -530,12 +674,12 @@
       }), optimisticApply);
     }
 
-    function queueNodeMutation(nodeId, apiName, payloadFactory, optimisticApply) {
+    function queueNodeMutation(nodeId, apiName, payloadFactory, optimisticApply, options = {}) {
       if (!state.currentMember) {
         showToast('メンバー未登録のため保存不可', 'error');
         return Promise.resolve();
       }
-      const before = cloneNode(state.nodesById.get(nodeId));
+      const before = options.snapshot ? options.snapshot() : cloneNode(state.nodesById.get(nodeId));
       if (optimisticApply) {
         optimisticApply();
         state.syncStatus = 'pending';
@@ -553,15 +697,25 @@
         const result = await serverCall(apiName, payload);
         if (result.requestId && state.latestRequestByNode.get(nodeId) !== result.requestId) return;
         applyMutationResult(result);
+        if (options.onSuccess) options.onSuccess(result);
       }).catch(error => {
-        if (before) mergeNodes([before]);
+        if (options.rollback) {
+          options.rollback(before, error);
+        } else if (before) {
+          mergeNodes([before]);
+        }
         rebuildIndexes();
         state.syncStatus = 'error';
         persistLocalCache();
         showToast(error.message, 'error');
+        if (options.onError) options.onError(error);
         render();
       }).finally(() => {
         if (state.saveChains.get(nodeId) === chain) state.savingNodeIds.delete(nodeId);
+        if (!state.savingNodeIds.size && !state.pendingMutationCount && state.syncStatus === 'pending') {
+          state.syncStatus = 'synced';
+          state.lastSyncAt = new Date().toISOString();
+        }
         render();
       });
       state.saveChains.set(nodeId, chain);
@@ -616,21 +770,26 @@
       const textarea = document.getElementById('commentText');
       const text = textarea ? textarea.value.trim() : '';
       if (!text) return;
-      try {
-        const result = await serverCall('addComment', { nodeId, text });
+      const commentId = newClientId('comment');
+      const comment = {
+        id: commentId,
+        nodeId,
+        authorId: state.currentMember ? state.currentMember.id : '',
+        authorName: state.currentMember ? state.currentMember.name : '',
+        timestamp: nowIsoLocal(),
+        text
+      };
+      if (textarea) textarea.value = '';
+      queueBackgroundMutation(`comments:${nodeId}`, 'addComment', { commentId, nodeId, text }, () => {
         const comments = state.comments.get(nodeId) || [];
-        comments.push(result.comment);
+        comments.push(comment);
         state.comments.set(nodeId, comments);
         state.commentCounts[nodeId] = comments.length;
-        state.syncStatus = 'synced';
-        state.lastSyncAt = new Date().toISOString();
-        persistLocalCache();
-        render();
-      } catch (error) {
-        state.syncStatus = 'error';
-        showToast(error.message, 'error');
-        render();
-      }
+      }, () => {
+        const comments = (state.comments.get(nodeId) || []).filter(item => item.id !== commentId);
+        state.comments.set(nodeId, comments);
+        state.commentCounts[nodeId] = comments.length;
+      });
     }
 
     function moveNodeTo(nodeId, newParentId) {

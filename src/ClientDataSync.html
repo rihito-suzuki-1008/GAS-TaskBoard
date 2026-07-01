@@ -168,7 +168,7 @@
       const force = Boolean(options.force);
       const silent = Boolean(options.silent);
       if (state.syncStatus === 'syncing') return;
-      if (state.savingNodeIds.size) {
+      if (state.savingNodeIds.size || state.pendingMutationCount) {
         state.syncStatus = 'pending';
         if (force) showToast('保存中の変更があるため、完了後に同期してください', 'warning');
         render();
@@ -202,6 +202,8 @@
       state.memberById = new Map(state.members.map(member => [member.id, member]));
       state.statusColumns.sort(compareSortOrder);
       state.statusById = new Map(state.statusColumns.map(column => [column.id, column]));
+      state.currentMember = state.members.find(member => member.email === state.currentEmail) || null;
+      recomputeClientDerived();
     }
 
     function applyMutationResult(result) {
@@ -228,6 +230,14 @@
       if (Array.isArray(result.members)) state.members = result.members.slice();
       if (Array.isArray(result.statusColumns)) state.statusColumns = result.statusColumns.slice();
       if (Array.isArray(result.dependencies)) state.dependencies = result.dependencies.slice();
+      if (result.comment) {
+        const comments = state.comments.get(result.comment.nodeId) || [];
+        const index = comments.findIndex(comment => comment.id === result.comment.id);
+        if (index === -1) comments.push(result.comment);
+        else comments[index] = result.comment;
+        state.comments.set(result.comment.nodeId, comments);
+        state.commentCounts[result.comment.nodeId] = comments.length;
+      }
       if (result.commentCounts) state.commentCounts = result.commentCounts;
       rebuildIndexes();
       syncDetailDraftAfterMutation();
@@ -244,4 +254,109 @@
       const map = new Map(state.nodes.map(node => [node.id, node]));
       nodes.forEach(node => map.set(node.id, node));
       state.nodes = Array.from(map.values());
+    }
+
+    function queueBackgroundMutation(scope, apiName, payload, optimisticApply, rollback, options = {}) {
+      if (!state.currentMember && apiName !== 'setupProject') {
+        showToast('メンバー未登録のため保存不可', 'error');
+        return Promise.resolve();
+      }
+      payload = payload || {};
+      if (payload.requestId === undefined) payload.requestId = nextRequestId();
+      if (optimisticApply) optimisticApply();
+      state.pendingMutationCount += 1;
+      state.syncStatus = 'pending';
+      rebuildIndexes();
+      syncDetailDraftAfterMutation();
+      persistLocalCache();
+      render();
+
+      const previous = state.backgroundChains.get(scope) || Promise.resolve();
+      const chain = previous.catch(() => {}).then(async () => {
+        const result = await serverCall(apiName, payload);
+        if (options.beforeApply) options.beforeApply(result);
+        applyMutationResult(result);
+        if (options.onSuccess) options.onSuccess(result);
+        return result;
+      }).catch(error => {
+        if (rollback) rollback(error);
+        rebuildIndexes();
+        syncDetailDraftAfterMutation();
+        state.syncStatus = 'error';
+        persistLocalCache();
+        showToast(error.message, 'error');
+        if (options.onError) options.onError(error);
+        render();
+      }).finally(() => {
+        state.pendingMutationCount = Math.max(0, state.pendingMutationCount - 1);
+        if (state.backgroundChains.get(scope) === chain) state.backgroundChains.delete(scope);
+        if (state.pendingMutationCount || state.savingNodeIds.size) {
+          state.syncStatus = 'pending';
+        }
+        render();
+      });
+      state.backgroundChains.set(scope, chain);
+      return chain;
+    }
+
+    function recomputeClientDerived() {
+      const children = new Map();
+      state.nodes.forEach(node => {
+        const parentId = node.parentId || '';
+        if (!children.has(parentId)) children.set(parentId, []);
+        children.get(parentId).push(node.id);
+      });
+      const doneColumn = state.statusColumns.find(column => column.isDoneColumn) || state.statusColumns[0] || {};
+      const doneColumnId = doneColumn.id || '';
+      const progressMemo = new Map();
+      const boundsMemo = new Map();
+
+      function progressOf(nodeId) {
+        if (progressMemo.has(nodeId)) return progressMemo.get(nodeId);
+        const node = state.nodesById.get(nodeId);
+        const childIds = children.get(nodeId) || [];
+        if (!node) return 0;
+        if (!childIds.length) {
+          const value = node.statusColumnId === doneColumnId ? 100 : 0;
+          progressMemo.set(nodeId, value);
+          return value;
+        }
+        const sum = childIds.reduce((total, childId) => total + progressOf(childId), 0);
+        const value = Math.round((sum / childIds.length) * 10) / 10;
+        progressMemo.set(nodeId, value);
+        return value;
+      }
+
+      function boundsOf(nodeId) {
+        if (boundsMemo.has(nodeId)) return boundsMemo.get(nodeId);
+        const node = state.nodesById.get(nodeId);
+        const starts = [];
+        const ends = [];
+        if (node && node.startDate && node.endDate) {
+          starts.push(node.startDate);
+          ends.push(node.endDate);
+        }
+        (children.get(nodeId) || []).forEach(childId => {
+          const bounds = boundsOf(childId);
+          if (bounds.startDate && bounds.endDate) {
+            starts.push(bounds.startDate);
+            ends.push(bounds.endDate);
+          }
+        });
+        const value = starts.length
+          ? { startDate: starts.sort()[0], endDate: ends.sort()[ends.length - 1] }
+          : { startDate: '', endDate: '' };
+        boundsMemo.set(nodeId, value);
+        return value;
+      }
+
+      state.nodes.forEach(node => {
+        const childIds = children.get(node.id) || [];
+        const bounds = boundsOf(node.id);
+        node.hasChildren = childIds.length > 0;
+        node.isLeaf = childIds.length === 0;
+        node.progress = progressOf(node.id);
+        node.displayStartDate = bounds.startDate;
+        node.displayEndDate = bounds.endDate;
+      });
     }

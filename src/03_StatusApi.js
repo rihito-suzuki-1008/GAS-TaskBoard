@@ -25,14 +25,22 @@ function upsertStatusColumn(payload) {
         columns.forEach(function (c) { c.IsDoneColumn = cleanString_(c.ColumnId) === columnId; });
       }
     } else {
+      const newColumnId = cleanString_(payload.clientColumnId);
+      const duplicateId = columns.some(function (c) { return cleanString_(c.ColumnId) === newColumnId; });
+      if (newColumnId && duplicateId) {
+        throw new Error('同じIDのステータス列が既に存在します。');
+      }
+      if (payload.isDoneColumn === true) {
+        columns.forEach(function (c) { c.IsDoneColumn = false; });
+      }
       const newColumn = {
-        ColumnId: newId_(),
+        ColumnId: newColumnId || newId_(),
         Name: name,
         SortOrder: payload.sortOrder !== undefined && payload.sortOrder !== null && payload.sortOrder !== ''
           ? Number(payload.sortOrder)
           : nextSortOrder_(columns),
-        IsDoneColumn: false,
-        Color: normalizeStatusColor_(payload.color, name, false)
+        IsDoneColumn: payload.isDoneColumn === true,
+        Color: normalizeStatusColor_(payload.color, name, payload.isDoneColumn === true)
       };
       columns.push(newColumn);
       appendObject_(SHEET.STATUS_COLUMNS, newColumn);

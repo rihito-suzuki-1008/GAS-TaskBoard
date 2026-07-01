@@ -94,8 +94,39 @@
       return `${Date.now()}-${state.requestCounter}`;
     }
 
+    function newClientId(prefix) {
+      if (window.crypto && typeof crypto.randomUUID === 'function') {
+        return `${prefix}-${crypto.randomUUID()}`;
+      }
+      state.requestCounter += 1;
+      return `${prefix}-${Date.now()}-${state.requestCounter}`;
+    }
+
+    function nowIsoLocal() {
+      return new Date().toISOString();
+    }
+
     function cloneNode(node) {
       return node ? JSON.parse(JSON.stringify(node)) : null;
+    }
+
+    function cloneValue(value) {
+      return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+    }
+
+    function nextLocalNodeSortOrder(parentId) {
+      const siblings = state.nodes.filter(node => node.parentId === parentId);
+      if (!siblings.length) return 1000;
+      return Math.max(...siblings.map(node => Number(node.sortOrder) || 0)) + 1000;
+    }
+
+    function nextLocalStatusSortOrder() {
+      if (!state.statusColumns.length) return 1000;
+      return Math.max(...state.statusColumns.map(column => Number(column.sortOrder) || 0)) + 1000;
+    }
+
+    function normalizeClientEmail(value) {
+      return cleanText(value).toLowerCase();
     }
 
     function dateToDay(value) {

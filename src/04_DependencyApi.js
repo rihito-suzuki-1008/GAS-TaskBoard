@@ -15,8 +15,13 @@ function addDependency(payload) {
     const successorId = cleanString_(payload.successorId);
     validateDependency_(predecessorId, successorId, active, rows.dependencies);
 
+    const dependencyId = cleanString_(payload.dependencyId || payload.clientDependencyId);
+    const duplicateId = rows.dependencies.some(function (dep) { return cleanString_(dep.DependencyId) === dependencyId; });
+    if (dependencyId && duplicateId) {
+      throw new Error('同じIDの依存関係が既に存在します。');
+    }
     appendObject_(SHEET.DEPENDENCIES, {
-      DependencyId: newId_(),
+      DependencyId: dependencyId || newId_(),
       PredecessorNodeId: predecessorId,
       SuccessorNodeId: successorId
     });

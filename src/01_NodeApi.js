@@ -21,7 +21,11 @@ function addNode(payload) {
       throw new Error('ステータス列がありません。');
     }
 
-    const nodeId = newId_();
+    const requestedNodeId = cleanString_(payload.nodeId || payload.clientNodeId);
+    if (requestedNodeId && nodesById[requestedNodeId]) {
+      throw new Error('同じIDのノードが既に存在します。');
+    }
+    const nodeId = requestedNodeId || newId_();
     const now = nowIso_();
     const schedule = normalizeSchedule_(payload.startDate, payload.endDate);
     const isShell = payload.isShell === true;

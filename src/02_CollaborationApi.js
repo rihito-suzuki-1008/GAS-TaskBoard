@@ -33,8 +33,13 @@ function addComment(payload) {
     if (text.length > 4000) {
       throw new Error('コメントは4000文字以内で入力してください。');
     }
+    const commentId = cleanString_(payload.commentId || payload.clientCommentId);
+    const duplicate = rows.comments.some(function (c) { return cleanString_(c.CommentId) === commentId; });
+    if (commentId && duplicate) {
+      throw new Error('同じIDのコメントが既に存在します。');
+    }
     const comment = {
-      CommentId: newId_(),
+      CommentId: commentId || newId_(),
       NodeId: nodeId,
       AuthorId: actor.MemberId,
       AuthorName: actor.Name,
@@ -73,8 +78,13 @@ function upsertMember(payload) {
       member.Color = color;
       writeObject_(SHEET.MEMBERS, member);
     } else {
+      const newMemberId = cleanString_(payload.clientMemberId);
+      const duplicateId = rows.members.some(function (m) { return cleanString_(m.MemberId) === newMemberId; });
+      if (newMemberId && duplicateId) {
+        throw new Error('同じIDのメンバーが既に存在します。');
+      }
       appendObject_(SHEET.MEMBERS, {
-        MemberId: newId_(),
+        MemberId: newMemberId || newId_(),
         Name: name,
         Email: email,
         Color: color

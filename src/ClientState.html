@@ -35,6 +35,8 @@
       dragOverColumnId: '',
       columnDragId: '',
       ganttCreateDrag: null,
+      backgroundChains: new Map(),
+      pendingMutationCount: 0,
       saveChains: new Map(),
       latestRequestByNode: new Map(),
       savingNodeIds: new Set(),
