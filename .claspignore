@@ -1,0 +1,11 @@
+**/**
+!appsscript.json
+!Code.gs
+!*.gs
+!*.js
+!*.html
+!src/appsscript.json
+!src/Code.gs
+!src/*.gs
+!src/*.js
+!src/*.html

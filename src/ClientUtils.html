@@ -1,0 +1,267 @@
+    // Rendering helpers, formatting, escaping, scheduling, and toasts.
+    function renderAvatars(ids) {
+      const members = (ids || []).map(id => state.memberById.get(id)).filter(Boolean);
+      if (!members.length) return '<span class="meta-line">未割当</span>';
+      return `<span class="avatar-list">${members.map(renderAvatar).join('')}</span>`;
+    }
+
+    function renderAvatar(member) {
+      const initial = (member.name || member.email || '?').slice(0, 1).toUpperCase();
+      return `<span class="avatar" title="${h(member.name)}" style="background:${h(member.color || 'var(--color-accent)')}">${h(initial)}</span>`;
+    }
+
+    function priorityOptions() {
+      return [
+        { value: 'High', label: '高', color: 'var(--color-priority-high)' },
+        { value: 'Mid', label: '中', color: 'var(--color-priority-mid)' },
+        { value: 'Low', label: '低', color: 'var(--color-priority-low)' }
+      ];
+    }
+
+    function priorityLabel(priority) {
+      return priority === 'High' ? '高' : priority === 'Low' ? '低' : '中';
+    }
+
+    function priorityColorVar(priority) {
+      if (priority === 'High') return 'var(--color-priority-high)';
+      if (priority === 'Low') return 'var(--color-priority-low)';
+      return 'var(--color-priority-mid)';
+    }
+
+    function statusName(id) {
+      const column = state.statusById.get(id);
+      return column ? column.name : '';
+    }
+
+    function dueClass(endDate) {
+      if (!endDate) return '';
+      const diff = dateToDay(endDate) - Math.floor(Date.now() / 86400000);
+      if (diff < 0) return 'overdue';
+      if (diff <= 3) return 'soon';
+      return '';
+    }
+
+    function shortDate(dateText) {
+      return dateText ? dateText.slice(5) : '';
+    }
+
+    function formatRange(start, end) {
+      if (!start && !end) return '';
+      if (start && end) return `${start} - ${end}`;
+      return start || end;
+    }
+
+    function formatDateTime(value) {
+      if (!value) return '';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value;
+      return date.toLocaleString('ja-JP', { hour12: false });
+    }
+
+    function zoomLabel(value) {
+      return value === 'day' ? '日' : value === 'week' ? '週' : '月';
+    }
+
+    function compareSortOrder(a, b) {
+      return (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0) || String(a.name || '').localeCompare(String(b.name || ''), 'ja');
+    }
+
+    function compareNodeOrder(a, b) {
+      return (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0) || String(a.name || '').localeCompare(String(b.name || ''), 'ja');
+    }
+
+    function compareNodeForList(a, b) {
+      const field = state.listSort.field;
+      const dir = state.listSort.dir;
+      if (field === 'sortOrder') return compareNodeOrder(a, b);
+      let av = field === 'status' ? statusName(a.statusColumnId) : a[field];
+      let bv = field === 'status' ? statusName(b.statusColumnId) : b[field];
+      if (field === 'progress') {
+        av = Number(av) || 0;
+        bv = Number(bv) || 0;
+        return (av - bv) * dir || compareNodeOrder(a, b);
+      }
+      return String(av || '').localeCompare(String(bv || ''), 'ja') * dir || compareNodeOrder(a, b);
+    }
+
+    function currentUpdatedAt(nodeId) {
+      const node = state.nodesById.get(nodeId);
+      return node ? node.updatedAt : '';
+    }
+
+    function nextRequestId() {
+      state.requestCounter += 1;
+      return `${Date.now()}-${state.requestCounter}`;
+    }
+
+    function cloneNode(node) {
+      return node ? JSON.parse(JSON.stringify(node)) : null;
+    }
+
+    function dateToDay(value) {
+      if (!value) return 0;
+      const parts = String(value).split('-').map(Number);
+      return Math.floor(Date.UTC(parts[0], parts[1] - 1, parts[2]) / 86400000);
+    }
+
+    function dayToDate(day) {
+      const date = new Date(day * 86400000);
+      const y = date.getUTCFullYear();
+      const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(date.getUTCDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+
+    function checked(condition) {
+      return condition ? 'checked' : '';
+    }
+
+    function cleanText(value) {
+      return String(value ?? '').trim();
+    }
+
+    function h(value) {
+      return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+      }[char]));
+    }
+
+    function cssEscape(value) {
+      if (window.CSS && CSS.escape) return CSS.escape(value);
+      return String(value).replace(/"/g, '\\"');
+    }
+
+    function defaultMemberColor() {
+      return getComputedStyle(document.documentElement).getPropertyValue('--color-accent').trim();
+    }
+
+    function defaultStatusColor(column = {}) {
+      const name = String(column.name || '').toLowerCase();
+      if (column.isDoneColumn || name.includes('完了') || name.includes('done')) return '#1E6F5C';
+      if (name.includes('進行') || name.includes('progress') || name.includes('doing')) return '#2F6FDB';
+      if (name.includes('未着手') || name.includes('todo') || name.includes('to do')) return '#98A098';
+      return '#667066';
+    }
+
+    function normalizeHex(value) {
+      const color = String(value || '').trim();
+      return /^#[0-9a-fA-F]{6}$/.test(color) ? color.toUpperCase() : '';
+    }
+
+    function syncIconName() {
+      if (state.syncStatus === 'syncing') return 'refresh';
+      if (state.syncStatus === 'error') return 'alert-circle';
+      if (state.syncStatus === 'local') return 'database';
+      if (state.syncStatus === 'pending') return 'database';
+      return 'check-circle';
+    }
+
+    function syncLabel() {
+      if (state.syncStatus === 'syncing') return '同期中';
+      if (state.syncStatus === 'error') return '同期エラー';
+      if (state.syncStatus === 'local') return 'ローカル表示';
+      if (state.syncStatus === 'pending') return 'ローカル保存済み';
+      if (!state.lastSyncAt) return '同期待ち';
+      const date = new Date(state.lastSyncAt);
+      if (Number.isNaN(date.getTime())) return '同期済み';
+      return `同期済み ${date.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}`;
+    }
+
+    function formatShortRange(start, end) {
+      if (!start && !end) return '';
+      if (start && end) {
+        if (start === end) return start.slice(5).replace('-', '/');
+        if (start.slice(0, 4) === end.slice(0, 4)) {
+          return `${start.slice(5).replace('-', '/')} - ${end.slice(5).replace('-', '/')}`;
+        }
+        return `${start.replace(/-/g, '/')} - ${end.replace(/-/g, '/')}`;
+      }
+      return (start || end).replace(/-/g, '/');
+    }
+
+    function durationLabel(start, end) {
+      if (!start || !end) return '';
+      const days = dateToDay(end) - dateToDay(start) + 1;
+      return days > 0 ? `${days}日` : '';
+    }
+
+    function monthStartDay(day) {
+      const date = new Date(day * 86400000);
+      return Math.floor(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1) / 86400000);
+    }
+
+    function alignTickDay(day, step) {
+      if (step === 7) {
+        const date = new Date(day * 86400000);
+        const dayOfWeek = date.getUTCDay();
+        return day + ((8 - dayOfWeek) % 7);
+      }
+      return monthStartDay(day);
+    }
+
+    function formatTickLabel(day) {
+      const date = new Date(day * 86400000);
+      return `${date.getUTCMonth() + 1}/${date.getUTCDate()}`;
+    }
+
+    let renderTimer = null;
+
+    function scheduleRender() {
+      const active = document.activeElement;
+      const restoreId = active && active.id === 'filterQuery' ? active.id : '';
+      const restoreStart = restoreId ? active.selectionStart : null;
+      const restoreEnd = restoreId ? active.selectionEnd : null;
+      clearTimeout(renderTimer);
+      renderTimer = setTimeout(() => {
+        renderTimer = null;
+        render();
+        if (restoreId) {
+          const next = document.getElementById(restoreId);
+          if (next) {
+            next.focus();
+            if (restoreStart !== null && restoreEnd !== null) next.setSelectionRange(restoreStart, restoreEnd);
+          }
+        }
+      }, 180);
+    }
+
+    function showToast(message, type = 'success', options = {}) {
+      const id = `toast-${++state.toastCounter}`;
+      const toast = { id, message, type, sticky: Boolean(options.sticky), actionLabel: options.actionLabel || '' };
+      state.toasts.push(toast);
+      renderToasts();
+      if (!toast.sticky) {
+        setTimeout(() => dismissToast(id), 3000);
+      }
+    }
+
+    function dismissToast(id) {
+      state.toasts = state.toasts.filter(toast => toast.id !== id);
+      renderToasts();
+    }
+
+    function renderToasts() {
+      toastRoot.innerHTML = state.toasts.map(toast => `
+        <div class="toast" style="--toast-color:${toastColor(toast.type)}">
+          <div class="toast-bar"></div>
+          <div class="toast-message">${h(toast.message)}</div>
+          <div class="toast-actions">
+            ${toast.actionLabel ? `<button class="button secondary compact" data-toast-dismiss="${h(toast.id)}">${h(toast.actionLabel)}</button>` : ''}
+            <button class="button ghost icon compact" data-toast-dismiss="${h(toast.id)}">${icon('x')}</button>
+          </div>
+        </div>
+      `).join('');
+      toastRoot.querySelectorAll('[data-toast-dismiss]').forEach(button => {
+        button.addEventListener('click', () => dismissToast(button.dataset.toastDismiss));
+      });
+    }
+
+    function toastColor(type) {
+      if (type === 'error') return 'var(--color-danger)';
+      if (type === 'warning') return 'var(--color-warning)';
+      return 'var(--color-accent)';
+    }

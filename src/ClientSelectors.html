@@ -1,0 +1,105 @@
+    // Filtering, hierarchy traversal, and gantt scale calculations.
+    function filteredNodes() {
+      return state.nodes.filter(node => matchesFilters(node));
+    }
+
+    function matchesFilters(node) {
+      const query = state.filters.query.trim().toLowerCase();
+      if (query) {
+        const text = [node.name, node.description].join(' ').toLowerCase();
+        if (!text.includes(query)) return false;
+      }
+      if (state.filters.parentId && node.id !== state.filters.parentId && !isDescendantOf(node.id, state.filters.parentId)) return false;
+      if (state.filters.assigneeId && !node.assigneeIds.includes(state.filters.assigneeId)) return false;
+      if (state.filters.priority && node.priority !== state.filters.priority) return false;
+      return true;
+    }
+
+    function visibleTreeNodes() {
+      const roots = state.nodes.filter(node => !node.parentId).sort(compareNodeForList);
+      const matching = new Set(state.nodes.filter(matchesFilters).map(node => node.id));
+      const includeSet = new Set(matching);
+      matching.forEach(id => ancestorChain(id).forEach(ancestorId => includeSet.add(ancestorId)));
+      const rows = [];
+      function visit(node) {
+        if (!includeSet.has(node.id)) return;
+        rows.push(node);
+        if (state.collapsed.has(node.id)) return;
+        childrenOf(node.id).sort(compareNodeForList).forEach(visit);
+      }
+      roots.forEach(visit);
+      return rows;
+    }
+
+    function treeOrderedNodes() {
+      const rows = [];
+      function visit(node) {
+        rows.push(node);
+        childrenOf(node.id).sort(compareNodeOrder).forEach(visit);
+      }
+      state.nodes.filter(node => !node.parentId).sort(compareNodeOrder).forEach(visit);
+      return rows;
+    }
+
+    function childrenOf(parentId) {
+      return state.nodes.filter(node => node.parentId === parentId).sort(compareNodeOrder);
+    }
+
+    function collectDescendants(nodeId) {
+      const result = [];
+      const stack = childrenOf(nodeId).map(node => node.id);
+      while (stack.length) {
+        const id = stack.shift();
+        result.push(id);
+        childrenOf(id).forEach(child => stack.push(child.id));
+      }
+      return result;
+    }
+
+    function ancestorChain(nodeId) {
+      const chain = [];
+      let node = state.nodesById.get(nodeId);
+      while (node && node.parentId) {
+        chain.push(node.parentId);
+        node = state.nodesById.get(node.parentId);
+      }
+      return chain;
+    }
+
+    function isDescendantOf(nodeId, ancestorId) {
+      return ancestorChain(nodeId).includes(ancestorId);
+    }
+
+    function depthOf(nodeId) {
+      return ancestorChain(nodeId).length;
+    }
+
+    function toggleCollapsed(nodeId) {
+      if (state.collapsed.has(nodeId)) state.collapsed.delete(nodeId);
+      else state.collapsed.add(nodeId);
+      render();
+    }
+
+    function visibleAnchor(nodeId, visibleSet) {
+      let node = state.nodesById.get(nodeId);
+      while (node && !visibleSet.has(node.id) && node.parentId) node = state.nodesById.get(node.parentId);
+      return node ? node.id : nodeId;
+    }
+
+    function ganttScale(rows) {
+      const scheduled = rows.filter(node => node.displayStartDate && node.displayEndDate);
+      const today = Math.floor(Date.now() / 86400000);
+      let startDay = scheduled.length ? Math.min(...scheduled.map(node => dateToDay(node.displayStartDate))) : today - 2;
+      let endDay = scheduled.length ? Math.max(...scheduled.map(node => dateToDay(node.displayEndDate))) : today + 21;
+      startDay -= state.ganttZoom === 'day' ? 3 : 14;
+      endDay += state.ganttZoom === 'day' ? 7 : 31;
+      const baseDayWidth = state.ganttZoom === 'day' ? 18 : state.ganttZoom === 'week' ? 10 : 4;
+      const dayWidth = Math.max(3, Math.round(baseDayWidth * (Number(state.ganttScaleFactor) || 1)));
+      return { startDay, endDay, dayWidth, width: Math.max(900, (endDay - startDay + 1) * dayWidth) };
+    }
+
+    function addMonthDay(day) {
+      const date = new Date(day * 86400000);
+      const next = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1));
+      return Math.floor(next.getTime() / 86400000);
+    }

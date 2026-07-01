@@ -1,0 +1,349 @@
+    // Event binding, dropdown interaction, drag/drop binding.
+    function bindCommon() {
+      app.querySelectorAll('[data-view]').forEach(button => {
+        button.addEventListener('click', () => {
+          state.view = button.dataset.view;
+          render();
+        });
+      });
+      bindActionAndDraft(app);
+      const query = document.getElementById('filterQuery');
+      if (query) query.addEventListener('input', () => {
+        state.filters.query = query.value;
+        scheduleRender();
+      });
+    }
+
+    // Shared by the main shell (fresh nodes every render, so plain addEventListener
+    // is fine) and the dialog/drawer roots (nodes can persist across a patch, so
+    // bindOnce there guards against attaching a second listener to the same element).
+    function bindActionAndDraft(container) {
+      container.querySelectorAll('[data-action]').forEach(element => {
+        bindOnce(element, 'click', handleActionClick);
+      });
+      container.querySelectorAll('[data-draft-scope]').forEach(element => {
+        bindOnce(element, 'input', handleDraftInput);
+        bindOnce(element, 'change', handleDraftInput);
+      });
+    }
+
+    function bindDropdowns(container) {
+      container.querySelectorAll('[data-dropdown-trigger]').forEach(button => {
+        bindOnce(button, 'click', event => {
+          event.stopPropagation();
+          const id = button.dataset.dropdownTrigger;
+          state.openDropdown = state.openDropdown === id ? '' : id;
+          render();
+        });
+        bindOnce(button, 'keydown', event => {
+          if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            state.openDropdown = button.dataset.dropdownTrigger;
+            render();
+            focusFirstDropdownOption();
+          }
+        });
+      });
+      container.querySelectorAll('[data-dropdown-option]').forEach(option => {
+        bindOnce(option, 'click', event => {
+          event.stopPropagation();
+          const id = option.dataset.dropdownOption;
+          const value = option.dataset.value;
+          const dropdown = Array.from(container.querySelectorAll('[data-dropdown]')).find(item => item.dataset.dropdown === id);
+          const scope = dropdown.dataset.scope;
+          const field = dropdown.dataset.field;
+          const multi = dropdown.dataset.multi === 'true';
+          setDropdownValue(scope, field, value, multi);
+          if (!multi) state.openDropdown = '';
+          render();
+        });
+        bindOnce(option, 'keydown', handleDropdownOptionKeydown);
+      });
+    }
+
+    function bindKanban() {
+      const toggle = document.getElementById('toggleGroups');
+      if (toggle) {
+        toggle.addEventListener('change', event => {
+          state.showGroupsInKanban = event.target.checked;
+          render();
+        });
+      }
+      document.querySelectorAll('[data-column-drag]').forEach(handle => {
+        handle.addEventListener('dragstart', event => {
+          state.columnDragId = handle.dataset.columnDrag;
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/status-column', state.columnDragId);
+          const columnEl = handle.closest('.kanban-column');
+          if (columnEl) columnEl.classList.add('column-dragging');
+        });
+        handle.addEventListener('dragend', () => {
+          state.columnDragId = '';
+          document.querySelectorAll('.kanban-column').forEach(el => {
+            el.classList.remove('column-dragging', 'drop-indicator-left', 'drop-indicator-right');
+          });
+        });
+      });
+      document.querySelectorAll('.kanban-column[data-column-id]').forEach(columnEl => {
+        columnEl.addEventListener('dragover', event => {
+          if (!state.columnDragId || state.columnDragId === columnEl.dataset.columnId) return;
+          event.preventDefault();
+          clearColumnDropIndicators();
+          columnEl.classList.add(isBeforeColumn(event, columnEl) ? 'drop-indicator-left' : 'drop-indicator-right');
+        });
+        columnEl.addEventListener('dragleave', event => {
+          if (!columnEl.contains(event.relatedTarget)) {
+            columnEl.classList.remove('drop-indicator-left', 'drop-indicator-right');
+          }
+        });
+        columnEl.addEventListener('drop', event => {
+          if (!state.columnDragId) return;
+          event.preventDefault();
+          const targetId = columnEl.dataset.columnId;
+          const sourceId = state.columnDragId;
+          const before = isBeforeColumn(event, columnEl);
+          state.columnDragId = '';
+          clearColumnDropIndicators();
+          if (sourceId && targetId && sourceId !== targetId) reorderStatusColumn(sourceId, targetId, before);
+        });
+      });
+      document.querySelectorAll('[data-card-id]').forEach(card => {
+        card.addEventListener('dragstart', event => {
+          event.stopPropagation();
+          state.draggedNodeId = card.dataset.cardId;
+          state.draggingCardId = card.dataset.cardId;
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', state.draggedNodeId);
+          card.classList.add('dragging');
+        });
+        card.addEventListener('dragend', () => {
+          card.classList.remove('dragging');
+          state.draggingCardId = '';
+          state.draggedNodeId = '';
+          state.dragOverColumnId = '';
+          render();
+        });
+        card.addEventListener('click', () => openNode(card.dataset.cardId));
+      });
+      document.querySelectorAll('[data-drop-column]').forEach(area => {
+        area.addEventListener('dragover', event => {
+          if (state.columnDragId) return;
+          event.preventDefault();
+          state.dragOverColumnId = area.dataset.dropColumn;
+          area.classList.add('drag-over');
+        });
+        area.addEventListener('dragleave', () => {
+          area.classList.remove('drag-over');
+        });
+        area.addEventListener('drop', event => {
+          if (state.columnDragId) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const nodeId = state.draggedNodeId || event.dataTransfer.getData('text/plain');
+          const columnId = area.dataset.dropColumn;
+          area.classList.remove('drag-over');
+          state.draggingCardId = '';
+          state.draggedNodeId = '';
+          state.dragOverColumnId = '';
+          const node = state.nodesById.get(nodeId);
+          if (node && node.statusColumnId !== columnId) {
+            saveNodePatch(nodeId, { statusColumnId: columnId }, () => {
+              node.statusColumnId = columnId;
+            });
+          } else {
+            render();
+          }
+        });
+      });
+    }
+
+    function isBeforeColumn(event, columnEl) {
+      const rect = columnEl.getBoundingClientRect();
+      return (event.clientX - rect.left) < rect.width / 2;
+    }
+
+    function clearColumnDropIndicators() {
+      document.querySelectorAll('.kanban-column').forEach(el => {
+        el.classList.remove('drop-indicator-left', 'drop-indicator-right');
+      });
+    }
+
+    function bindTreeRows() {
+      document.querySelectorAll('[data-toggle-node]').forEach(button => {
+        button.addEventListener('click', event => {
+          event.stopPropagation();
+          toggleCollapsed(button.dataset.toggleNode);
+        });
+      });
+      document.querySelectorAll('[data-open-node]').forEach(element => {
+        element.addEventListener('click', event => {
+          event.stopPropagation();
+          openNode(element.dataset.openNode);
+        });
+      });
+      document.querySelectorAll('[data-tree-node]').forEach(row => {
+        row.addEventListener('dragstart', event => {
+          state.draggedNodeId = row.dataset.treeNode;
+          event.dataTransfer.setData('text/plain', state.draggedNodeId);
+        });
+        row.addEventListener('dragover', event => event.preventDefault());
+        row.addEventListener('drop', event => {
+          event.preventDefault();
+          const nodeId = state.draggedNodeId || event.dataTransfer.getData('text/plain');
+          const newParentId = row.dataset.treeNode;
+          if (nodeId && nodeId !== newParentId) moveNodeTo(nodeId, newParentId);
+        });
+      });
+      document.querySelectorAll('[data-sort-field]').forEach(button => {
+        button.addEventListener('click', () => {
+          const field = button.dataset.sortField;
+          state.listSort.dir = state.listSort.field === field ? state.listSort.dir * -1 : 1;
+          state.listSort.field = field;
+          render();
+        });
+      });
+    }
+
+    function bindGantt() {
+      bindTreeRows();
+      document.querySelectorAll('[data-zoom]').forEach(button => {
+        button.addEventListener('click', () => {
+          state.ganttZoom = button.dataset.zoom;
+          render();
+        });
+      });
+      const scaleInput = document.querySelector('[data-gantt-scale]');
+      if (scaleInput) {
+        scaleInput.addEventListener('input', event => {
+          state.ganttScaleFactor = Number(event.target.value) || 1;
+          render();
+        });
+      }
+      document.querySelectorAll('[data-gantt-bar]').forEach(bar => {
+        bar.addEventListener('pointerdown', startGanttDrag);
+        bar.addEventListener('click', event => {
+          event.stopPropagation();
+          openNode(bar.dataset.ganttBar);
+        });
+      });
+      document.querySelectorAll('[data-gantt-create-parent]').forEach(row => {
+        row.addEventListener('pointerdown', startGanttCreateDrag);
+      });
+    }
+
+    function handleActionClick(event) {
+      const action = event.currentTarget.dataset.action;
+      if (action === 'reload' || action === 'force-sync') return syncFromServer({ force: true });
+      if (action === 'create-child-shell') return createChildShell(event.currentTarget.dataset.parentId);
+      if (action === 'filter-member') {
+        state.filters.assigneeId = event.currentTarget.dataset.memberId || '';
+        render();
+        return;
+      }
+      if (action === 'set-color') {
+        const target = draftForScope(event.currentTarget.dataset.scope);
+        if (target) {
+          target[event.currentTarget.dataset.field] = event.currentTarget.dataset.color;
+          render();
+        }
+        return;
+      }
+      if (action === 'members') return openMembersDialog();
+      if (action === 'new-node') return openNodeCreateDialog(event.currentTarget.dataset.parentId, event.currentTarget.dataset.statusId);
+      if (action === 'new-status') return openStatusDialog();
+      if (action === 'edit-status') return openStatusDialog(event.currentTarget.dataset.columnId);
+      if (action === 'confirm-status-delete') return confirmStatusDelete(event.currentTarget.dataset.columnId);
+      if (action === 'close-dialog') return closeDialog();
+      if (action === 'close-drawer') return closeDrawer();
+      if (action === 'save-detail') return saveDetail();
+      if (action === 'fit-children') return fitChildren(event.currentTarget.dataset.nodeId);
+      if (action === 'confirm-node-delete') return confirmNodeDelete(event.currentTarget.dataset.nodeId);
+      if (action === 'delete-node') return deleteNodeConfirmed();
+      if (action === 'delete-status') return deleteStatusConfirmed();
+      if (action === 'post-comment') return postComment();
+      if (action === 'add-predecessor') return addPredecessor();
+      if (action === 'add-successor') return addSuccessor();
+      if (action === 'confirm-dependency-delete') return confirmDependencyDelete(event.currentTarget.dataset.dependencyId);
+      if (action === 'delete-dependency') return deleteDependencyConfirmed();
+      if (action === 'edit-member') return editMemberDraft(event.currentTarget.dataset.memberId);
+      if (action === 'clear-member-draft') return clearMemberDraft();
+      if (action === 'confirm-member-delete') return confirmMemberDelete(event.currentTarget.dataset.memberId);
+      if (action === 'delete-member') return deleteMemberConfirmed();
+    }
+
+    function handleDraftInput(event) {
+      const element = event.currentTarget;
+      const scope = element.dataset.draftScope;
+      const field = element.dataset.draftField;
+      const value = element.type === 'checkbox' ? element.checked : element.value;
+      const target = draftForScope(scope);
+      if (!target) return;
+      target[field] = value;
+    }
+
+    function setDropdownValue(scope, field, value, multi) {
+      const target = scope === 'filters' ? state.filters : draftForScope(scope);
+      if (!target) return;
+      if (multi) {
+        const current = Array.isArray(target[field]) ? target[field].slice() : [];
+        target[field] = current.includes(value) ? current.filter(item => item !== value) : current.concat(value);
+      } else {
+        target[field] = value;
+      }
+    }
+
+    function draftForScope(scope) {
+      if (scope === 'node') return state.dialog && state.dialog.type === 'node' ? state.dialog.draft : null;
+      if (scope === 'status') return state.dialog && state.dialog.type === 'status' ? state.dialog.draft : null;
+      if (scope === 'member') return state.dialog && state.dialog.type === 'members' ? state.dialog.draft : null;
+      if (scope === 'detail') return state.detailDraft;
+      if (scope === 'dependency') return dependencyDraft();
+      if (scope === 'confirm') return state.dialog;
+      return null;
+    }
+
+    function dependencyDraft() {
+      if (!state.detailDraft) ensureDetailDraft(state.drawerNodeId);
+      if (!state.detailDraft.dependency) {
+        state.detailDraft.dependency = { predecessorId: '', successorId: '' };
+      }
+      return state.detailDraft.dependency;
+    }
+
+    function handleGlobalKeydown(event) {
+      if (event.key !== 'Escape') return;
+      if (state.openDropdown) {
+        state.openDropdown = '';
+        render();
+        return;
+      }
+      if (state.dialog) {
+        closeDialog();
+        return;
+      }
+      if (state.drawerNodeId) closeDrawer();
+    }
+
+    function handleDropdownOptionKeydown(event) {
+      const options = Array.from(document.querySelectorAll('[data-dropdown-option]'));
+      const index = options.indexOf(event.currentTarget);
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        (options[index + 1] || options[0]).focus();
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        (options[index - 1] || options[options.length - 1]).focus();
+      }
+      if (event.key === 'Escape') {
+        state.openDropdown = '';
+        render();
+      }
+    }
+
+    function focusFirstDropdownOption() {
+      requestAnimationFrame(() => {
+        const option = document.querySelector('[data-dropdown-option]');
+        if (option) option.focus();
+      });
+    }

@@ -1,0 +1,224 @@
+/**
+ * Response payload builders, serializers, and derived values.
+ */
+
+function makeFullPayload_(rows) {
+  const active = activeNodes_(rows.nodes);
+  const root = active.find(function (n) { return !cleanString_(n.ParentId); }) || active[0];
+  const currentEmail = getCurrentEmail_();
+  const currentMember = rows.members.find(function (m) { return normalizeEmail_(m.Email) === currentEmail; });
+  return {
+    ok: true,
+    setupRequired: false,
+    version: APP_VERSION,
+    currentEmail: currentEmail,
+    currentMember: currentMember ? clientMember_(currentMember) : null,
+    rootId: root ? root.NodeId : '',
+    nodes: clientNodes_(rows, active.map(function (n) { return n.NodeId; })),
+    members: rows.members.map(clientMember_),
+    statusColumns: rows.statusColumns.map(clientStatusColumn_).sort(compareSortOrder_),
+    dependencies: clientDependencies_(rows),
+    commentCounts: commentCounts_(rows),
+    unregistered: !currentMember
+  };
+}
+
+function makeMutationPayload_(rows, affectedIds, requestId, extra) {
+  extra = extra || {};
+  const payload = {
+    ok: true,
+    requestId: requestId || '',
+    nodes: clientNodes_(rows, affectedIds || []),
+    commentCounts: commentCounts_(rows)
+  };
+  Object.keys(extra).forEach(function (key) { payload[key] = extra[key]; });
+  return payload;
+}
+
+function makeConflictPayload_(rows, nodeId, requestId) {
+  const affected = unique_([nodeId].concat(ancestorIds_(nodeId, activeNodes_(rows.nodes))));
+  return {
+    ok: false,
+    code: 'CONFLICT',
+    message: '他のユーザーがこのノードを更新しました。最新内容を反映しました。',
+    requestId: requestId || '',
+    nodeId: nodeId,
+    nodes: clientNodes_(rows, affected)
+  };
+}
+
+function clientNodes_(rows, ids) {
+  const active = activeNodes_(rows.nodes);
+  const idSet = {};
+  (ids || []).forEach(function (id) { if (id) idSet[id] = true; });
+  const derived = computeDerived_(active, rows.statusColumns);
+  return active
+    .filter(function (node) { return idSet[node.NodeId]; })
+    .map(function (node) { return clientNode_(node, derived[node.NodeId]); });
+}
+
+function clientNodesByIds_(rows, ids) {
+  return clientNodes_(rows, ids || []);
+}
+
+function clientNode_(node, derived) {
+  derived = derived || {};
+  return {
+    id: cleanString_(node.NodeId),
+    parentId: cleanString_(node.ParentId),
+    name: cleanString_(node.Name),
+    statusColumnId: cleanString_(node.StatusColumnId),
+    assigneeIds: splitCsv_(node.AssigneeIds),
+    priority: normalizePriority_(node.Priority),
+    startDate: cleanString_(node.StartDate),
+    endDate: cleanString_(node.EndDate),
+    description: cleanString_(node.Description),
+    sortOrder: Number(node.SortOrder) || 0,
+    createdAt: cleanString_(node.CreatedAt),
+    updatedAt: cleanString_(node.UpdatedAt),
+    updatedBy: cleanString_(node.UpdatedBy),
+    progress: derived.progress || 0,
+    displayStartDate: derived.displayStartDate || '',
+    displayEndDate: derived.displayEndDate || '',
+    hasChildren: !!derived.hasChildren,
+    isLeaf: !derived.hasChildren
+  };
+}
+
+function clientMember_(member) {
+  return {
+    id: cleanString_(member.MemberId),
+    name: cleanString_(member.Name),
+    email: normalizeEmail_(member.Email),
+    color: normalizeColor_(member.Color) || '#1E6F5C'
+  };
+}
+
+function clientStatusColumn_(column) {
+  return {
+    id: cleanString_(column.ColumnId),
+    name: cleanString_(column.Name),
+    sortOrder: Number(column.SortOrder) || 0,
+    isDoneColumn: isTrue_(column.IsDoneColumn),
+    color: normalizeStatusColor_(column.Color, column.Name, isTrue_(column.IsDoneColumn))
+  };
+}
+
+function clientDependencies_(rows) {
+  const activeMap = byId_(activeNodes_(rows.nodes), 'NodeId');
+  return rows.dependencies
+    .filter(function (dep) {
+      return activeMap[cleanString_(dep.PredecessorNodeId)] && activeMap[cleanString_(dep.SuccessorNodeId)];
+    })
+    .map(function (dep) {
+      return {
+        id: cleanString_(dep.DependencyId),
+        predecessorId: cleanString_(dep.PredecessorNodeId),
+        successorId: cleanString_(dep.SuccessorNodeId)
+      };
+    });
+}
+
+function clientComment_(comment) {
+  return {
+    id: cleanString_(comment.CommentId),
+    nodeId: cleanString_(comment.NodeId),
+    authorId: cleanString_(comment.AuthorId),
+    authorName: cleanString_(comment.AuthorName),
+    timestamp: cleanString_(comment.Timestamp),
+    text: cleanString_(comment.Text)
+  };
+}
+
+function computeDerived_(activeNodes, statusColumns) {
+  const children = childrenMap_(activeNodes);
+  const nodesById = byId_(activeNodes, 'NodeId');
+  const doneColumn = statusColumns.find(function (c) { return isTrue_(c.IsDoneColumn); }) || statusColumns[0] || {};
+  const doneColumnId = cleanString_(doneColumn.ColumnId);
+  const progressMemo = {};
+  const boundsMemo = {};
+
+  function progressOf(id) {
+    if (progressMemo[id] !== undefined) {
+      return progressMemo[id];
+    }
+    const childIds = children[id] || [];
+    const node = nodesById[id];
+    if (!node) {
+      return 0;
+    }
+    if (!childIds.length) {
+      progressMemo[id] = cleanString_(node.StatusColumnId) === doneColumnId ? 100 : 0;
+      return progressMemo[id];
+    }
+    const sum = childIds.reduce(function (acc, childId) { return acc + progressOf(childId); }, 0);
+    progressMemo[id] = Math.round((sum / childIds.length) * 10) / 10;
+    return progressMemo[id];
+  }
+
+  function boundsOf(id) {
+    if (boundsMemo[id]) {
+      return boundsMemo[id];
+    }
+    const node = nodesById[id];
+    const starts = [];
+    const ends = [];
+    if (node && hasSchedule_(node)) {
+      starts.push(node.StartDate);
+      ends.push(node.EndDate);
+    }
+    (children[id] || []).forEach(function (childId) {
+      const b = boundsOf(childId);
+      if (b.startDate && b.endDate) {
+        starts.push(b.startDate);
+        ends.push(b.endDate);
+      }
+    });
+    if (!starts.length) {
+      boundsMemo[id] = { startDate: '', endDate: '' };
+      return boundsMemo[id];
+    }
+    boundsMemo[id] = {
+      startDate: starts.sort()[0],
+      endDate: ends.sort()[ends.length - 1]
+    };
+    return boundsMemo[id];
+  }
+
+  const derived = {};
+  activeNodes.forEach(function (node) {
+    const b = boundsOf(node.NodeId);
+    derived[node.NodeId] = {
+      hasChildren: (children[node.NodeId] || []).length > 0,
+      progress: progressOf(node.NodeId),
+      displayStartDate: b.startDate,
+      displayEndDate: b.endDate
+    };
+  });
+  return derived;
+}
+
+function descendantOwnScheduleBounds_(nodeId, activeNodes) {
+  const descendants = collectDescendantIds_(nodeId, childrenMap_(activeNodes));
+  const scheduled = descendants.map(function (id) {
+    return activeNodes.find(function (n) { return n.NodeId === id; });
+  }).filter(hasSchedule_);
+  if (!scheduled.length) {
+    return { startDate: '', endDate: '' };
+  }
+  const starts = scheduled.map(function (n) { return n.StartDate; }).sort();
+  const ends = scheduled.map(function (n) { return n.EndDate; }).sort();
+  return { startDate: starts[0], endDate: ends[ends.length - 1] };
+}
+
+function commentCounts_(rows) {
+  const activeMap = byId_(activeNodes_(rows.nodes), 'NodeId');
+  const counts = {};
+  rows.comments.forEach(function (comment) {
+    const nodeId = cleanString_(comment.NodeId);
+    if (activeMap[nodeId]) {
+      counts[nodeId] = (counts[nodeId] || 0) + 1;
+    }
+  });
+  return counts;
+}

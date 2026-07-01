@@ -1,0 +1,247 @@
+    // Loading, setup, local cache, sync, and mutation merge.
+    async function init() {
+      const cached = readLocalCache();
+      if (cached) {
+        state.syncStatus = 'local';
+        applyFullData(cached, { fromCache: true });
+        render();
+      }
+      try {
+        const data = await serverCall('loadAll');
+        if (data.setupRequired) {
+          state.setupRequired = true;
+          state.currentEmail = data.currentEmail || '';
+          renderSetup();
+          return;
+        }
+        applyFullData(data);
+        persistLocalCache();
+        startSyncLoop();
+        render();
+      } catch (error) {
+        if (cached) {
+          state.syncStatus = 'error';
+          showToast('スプレッドシート同期に失敗。ローカル表示を継続', 'warning');
+          render();
+        } else {
+          app.className = 'setup-screen';
+          app.innerHTML = `<div class="setup-card"><h1>読み込みエラー</h1><div>${h(error.message || String(error))}</div><button class="button primary" id="retryLoad">再読み込み</button></div>`;
+          document.getElementById('retryLoad').addEventListener('click', init);
+        }
+      }
+    }
+
+    function serverCall(name, ...args) {
+      return new Promise((resolve, reject) => {
+        const runner = google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(error => reject(new Error(error && error.message ? error.message : String(error))));
+        runner[name](...args);
+      });
+    }
+
+    function renderSetup() {
+      app.className = 'setup-screen';
+      app.innerHTML = `
+        <form class="setup-card" id="setupForm">
+          <h1>初回セットアップ</h1>
+          <label class="field">
+            <span class="field-label">案件名</span>
+            <input class="input" name="projectName" required value="新規案件">
+          </label>
+          <label class="field">
+            <span class="field-label">最初のメンバー名</span>
+            <input class="input" name="memberName" required value="${h((state.currentEmail || '').split('@')[0] || 'user')}">
+          </label>
+          <div class="field">
+            <span class="field-label">表示色</span>
+            ${renderSetupColorPicker(defaultMemberColor())}
+          </div>
+          <div class="meta-line">${h(state.currentEmail || 'メールアドレス未取得')}</div>
+          <button class="button primary" type="submit">${icon('check')}作成</button>
+        </form>
+      `;
+      const setupColor = document.getElementById('setupColor');
+      const setupColorAdvanced = document.getElementById('setupColorAdvanced');
+      document.querySelectorAll('[data-setup-color]').forEach(button => {
+        button.addEventListener('click', () => {
+          const color = button.dataset.setupColor;
+          setupColor.value = color;
+          if (setupColorAdvanced) setupColorAdvanced.value = color;
+          document.querySelectorAll('[data-setup-color]').forEach(item => {
+            const selected = normalizeHex(item.dataset.setupColor) === normalizeHex(color);
+            item.classList.toggle('selected', selected);
+            item.innerHTML = selected ? icon('check') : '';
+          });
+        });
+      });
+      if (setupColorAdvanced) {
+        setupColorAdvanced.addEventListener('input', () => {
+          setupColor.value = setupColorAdvanced.value;
+          document.querySelectorAll('[data-setup-color]').forEach(item => {
+            item.classList.remove('selected');
+            item.innerHTML = '';
+          });
+        });
+      }
+      document.getElementById('setupForm').addEventListener('submit', async event => {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        const submit = event.currentTarget.querySelector('button[type="submit"]');
+        submit.disabled = true;
+        try {
+          const data = await serverCall('setupProject', {
+            projectName: form.get('projectName'),
+            memberName: form.get('memberName'),
+            color: form.get('color')
+          });
+          applyFullData(data);
+          persistLocalCache();
+          startSyncLoop();
+          state.setupRequired = false;
+          render();
+        } catch (error) {
+          showToast(error.message, 'error');
+          submit.disabled = false;
+        }
+      });
+    }
+
+    function applyFullData(data, options = {}) {
+      state.nodes = (data.nodes || []).slice();
+      state.members = (data.members || []).slice();
+      state.statusColumns = (data.statusColumns || []).slice().sort(compareSortOrder);
+      state.dependencies = (data.dependencies || []).slice();
+      state.commentCounts = data.commentCounts || {};
+      state.currentMember = data.currentMember || null;
+      state.currentEmail = data.currentEmail || '';
+      state.rootId = data.rootId || '';
+      if (!options.fromCache) {
+        state.syncStatus = 'synced';
+        state.lastSyncAt = new Date().toISOString();
+      }
+      rebuildIndexes();
+    }
+
+    function snapshotForCache() {
+      return {
+        ok: true,
+        setupRequired: false,
+        version: 'local-cache',
+        cachedAt: new Date().toISOString(),
+        currentEmail: state.currentEmail,
+        currentMember: state.currentMember,
+        rootId: state.rootId,
+        nodes: state.nodes,
+        members: state.members,
+        statusColumns: state.statusColumns,
+        dependencies: state.dependencies,
+        commentCounts: state.commentCounts
+      };
+    }
+
+    function persistLocalCache() {
+      try {
+        localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(snapshotForCache()));
+      } catch (error) {
+        state.syncStatus = 'error';
+      }
+    }
+
+    function readLocalCache() {
+      try {
+        const raw = localStorage.getItem(LOCAL_CACHE_KEY);
+        return raw ? JSON.parse(raw) : null;
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function startSyncLoop() {
+      if (state.syncTimer) clearInterval(state.syncTimer);
+      state.syncTimer = setInterval(() => {
+        syncFromServer({ silent: true });
+      }, SYNC_INTERVAL_MS);
+    }
+
+    async function syncFromServer(options = {}) {
+      const force = Boolean(options.force);
+      const silent = Boolean(options.silent);
+      if (state.syncStatus === 'syncing') return;
+      if (state.savingNodeIds.size) {
+        state.syncStatus = 'pending';
+        if (force) showToast('保存中の変更があるため、完了後に同期してください', 'warning');
+        render();
+        return;
+      }
+      state.syncStatus = 'syncing';
+      if (!silent || force) render();
+      try {
+        const data = await serverCall('loadAll');
+        if (data.setupRequired) {
+          state.setupRequired = true;
+          state.currentEmail = data.currentEmail || state.currentEmail || '';
+          renderSetup();
+          return;
+        }
+        applyFullData(data);
+        persistLocalCache();
+        if (force) showToast('スプレッドシートと同期しました', 'success');
+        render();
+      } catch (error) {
+        state.syncStatus = 'error';
+        if (!silent || force) showToast(error.message, 'error');
+        render();
+      }
+    }
+
+    function rebuildIndexes() {
+      state.nodes.sort(compareNodeOrder);
+      state.nodesById = new Map(state.nodes.map(node => [node.id, node]));
+      state.members.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'));
+      state.memberById = new Map(state.members.map(member => [member.id, member]));
+      state.statusColumns.sort(compareSortOrder);
+      state.statusById = new Map(state.statusColumns.map(column => [column.id, column]));
+    }
+
+    function applyMutationResult(result) {
+      if (!result) return;
+      if (result.ok === false) {
+        if (Array.isArray(result.nodes)) mergeNodes(result.nodes);
+        rebuildIndexes();
+        if (result.code === 'CONFLICT') {
+          showToast(result.message || '他のユーザーが更新しました。', 'warning', { sticky: true, actionLabel: '最新の内容を見る' });
+        } else {
+          showToast(result.message || '保存できませんでした。', 'error');
+        }
+        persistLocalCache();
+        render();
+        return;
+      }
+      if (Array.isArray(result.deletedNodeIds)) {
+        const deleted = new Set(result.deletedNodeIds);
+        state.nodes = state.nodes.filter(node => !deleted.has(node.id));
+        if (deleted.has(state.drawerNodeId)) closeDrawer({ skipShellCleanup: true });
+        if (deleted.has(state.shellNodeId)) clearShellTracking();
+      }
+      if (Array.isArray(result.nodes)) mergeNodes(result.nodes);
+      if (Array.isArray(result.members)) state.members = result.members.slice();
+      if (Array.isArray(result.statusColumns)) state.statusColumns = result.statusColumns.slice();
+      if (Array.isArray(result.dependencies)) state.dependencies = result.dependencies.slice();
+      if (result.commentCounts) state.commentCounts = result.commentCounts;
+      rebuildIndexes();
+      syncDetailDraftAfterMutation();
+      state.syncStatus = 'synced';
+      state.lastSyncAt = new Date().toISOString();
+      persistLocalCache();
+      if (result.rescheduledCount) {
+        showToast(`後続タスク${result.rescheduledCount}件の日程を自動調整しました`, 'success');
+      }
+      render();
+    }
+
+    function mergeNodes(nodes) {
+      const map = new Map(state.nodes.map(node => [node.id, node]));
+      nodes.forEach(node => map.set(node.id, node));
+      state.nodes = Array.from(map.values());
+    }

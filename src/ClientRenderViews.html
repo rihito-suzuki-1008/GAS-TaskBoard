@@ -1,0 +1,482 @@
+    // Main shell, board, list, and gantt rendering.
+    function render() {
+      if (state.setupRequired) {
+        renderSetup();
+        return;
+      }
+      const root = state.nodesById.get(state.rootId);
+      app.className = 'shell';
+      app.innerHTML = `
+        <header class="topbar">
+          <div class="project-title" title="${h(root ? root.name : '')}">${h(root ? root.name : 'タスク管理')}</div>
+          <nav class="tabs" aria-label="ビュー">
+            ${tabButton('kanban', '看板')}
+            ${tabButton('gantt', 'ガント')}
+            ${tabButton('list', 'リスト')}
+          </nav>
+          <div class="top-actions">
+            <button class="button secondary" data-action="members">${icon('users')}メンバー</button>
+            <button class="button secondary" data-action="force-sync" title="強制同期">${icon('refresh')}強制同期</button>
+          </div>
+        </header>
+        ${state.currentMember ? '' : `<div class="banner">このメールアドレスはメンバー未登録です。保存操作は利用不可</div>`}
+        ${renderFilters()}
+        <main class="main">${renderMain()}</main>
+      `;
+      bindCommon();
+      bindDropdowns(app);
+      if (state.view === 'kanban') bindKanban();
+      if (state.view === 'list') bindTreeRows();
+      if (state.view === 'gantt') bindGantt();
+      renderDrawerRoot();
+      renderDialogRoot();
+      renderToasts();
+    }
+
+    // Dialog/drawer are mounted into their own persistent root elements instead of
+    // being part of the big app.innerHTML rebuild above. As long as the same dialog
+    // (by reference) or the same drawer node (by id) stays open, subsequent renders
+    // patch the existing .modal/.drawer node's inner content in place rather than
+    // recreating it, so the CSS open animation doesn't replay and the modal doesn't
+    // appear to "flash" every time something inside it changes (a dropdown pick, a
+    // color swatch, a background sync tick, etc).
+    let mountedDialogRef = null;
+    let mountedDrawerNodeId = '';
+
+    function renderDialogRoot() {
+      const root = document.getElementById('dialogRoot');
+      if (!state.dialog) {
+        if (mountedDialogRef !== null) root.innerHTML = '';
+        mountedDialogRef = null;
+        return;
+      }
+      if (state.dialog !== mountedDialogRef || !root.querySelector('.modal, .drawer')) {
+        root.innerHTML = renderDialog();
+        mountedDialogRef = state.dialog;
+      } else {
+        patchRootContent(root, renderDialog());
+      }
+      bindFloatingRoot(root);
+      bindDialogForms();
+    }
+
+    function renderDrawerRoot() {
+      const root = document.getElementById('drawerRoot');
+      if (!state.drawerNodeId) {
+        if (mountedDrawerNodeId !== '') root.innerHTML = '';
+        mountedDrawerNodeId = '';
+        return;
+      }
+      if (state.drawerNodeId !== mountedDrawerNodeId || !root.querySelector('.modal, .drawer')) {
+        root.innerHTML = renderDrawer();
+        mountedDrawerNodeId = state.drawerNodeId;
+      } else {
+        patchRootContent(root, renderDrawer());
+      }
+      bindFloatingRoot(root);
+      bindDrawerComments();
+    }
+
+    function patchRootContent(root, html) {
+      const temp = document.createElement('div');
+      temp.innerHTML = html;
+      const fresh = temp.querySelector('.modal, .drawer');
+      const current = root.querySelector('.modal, .drawer');
+      if (!fresh || !current) {
+        root.innerHTML = html;
+        return;
+      }
+      withFocusPreserved(current, () => {
+        current.innerHTML = fresh.innerHTML;
+      });
+    }
+
+    function withFocusPreserved(root, mutate) {
+      const active = document.activeElement;
+      const scope = root.contains(active) && active.dataset ? active.dataset.draftScope : null;
+      const field = scope ? active.dataset.draftField : null;
+      const selStart = scope && 'selectionStart' in active ? active.selectionStart : null;
+      const selEnd = scope && 'selectionEnd' in active ? active.selectionEnd : null;
+      mutate();
+      if (!scope || !field) return;
+      const next = root.querySelector(`[data-draft-scope="${cssEscape(scope)}"][data-draft-field="${cssEscape(field)}"]`);
+      if (!next) return;
+      next.focus();
+      if (selStart !== null && selEnd !== null && next.setSelectionRange) {
+        try { next.setSelectionRange(selStart, selEnd); } catch (error) { /* not a text selection field */ }
+      }
+    }
+
+    // Elements inside dialog/drawer roots can survive a patch (the .overlay and the
+    // outer .modal/.drawer node itself), so binding must be idempotent per-node or a
+    // patch cycle would stack duplicate listeners (e.g. multiple submits per click).
+    function bindOnce(el, type, handler) {
+      const flag = 'bound' + type[0].toUpperCase() + type.slice(1);
+      if (el.dataset[flag]) return;
+      el.dataset[flag] = '1';
+      el.addEventListener(type, handler);
+    }
+
+    function bindFloatingRoot(root) {
+      bindActionAndDraft(root);
+      bindDropdowns(root);
+      root.querySelectorAll('[data-open-node]').forEach(element => {
+        bindOnce(element, 'click', event => {
+          event.stopPropagation();
+          openNode(element.dataset.openNode);
+        });
+      });
+    }
+
+    function bindDialogForms() {
+      bindFormOnce('nodeDialogForm', createNodeFromDialog);
+      bindFormOnce('statusDialogForm', saveStatusFromDialog);
+      bindFormOnce('memberForm', saveMemberFromDialog);
+    }
+
+    function bindFormOnce(id, handler) {
+      const form = document.getElementById(id);
+      if (!form) return;
+      bindOnce(form, 'submit', event => {
+        event.preventDefault();
+        handler();
+      });
+    }
+
+    function bindDrawerComments() {
+      const node = state.nodesById.get(state.drawerNodeId);
+      if (!node) return;
+      if (!state.comments.has(node.id) && !state.commentsLoading.has(node.id)) {
+        loadComments(node.id);
+      }
+      if (state.focusDetailName) {
+        state.focusDetailName = false;
+        focusDetailNameInput();
+      }
+    }
+
+    function tabButton(view, label) {
+      return `<button class="button tab ${state.view === view ? 'active' : ''}" type="button" data-view="${view}">${label}</button>`;
+    }
+
+    function renderFilters() {
+      return `
+        <section class="filters">
+          <input class="input" id="filterQuery" value="${h(state.filters.query)}" placeholder="検索">
+          ${renderDropdown({
+            scope: 'filters',
+            field: 'parentId',
+            placeholder: '全階層',
+            selected: state.filters.parentId,
+            options: [{ value: '', label: '全階層' }].concat(treeOrderedNodes().map(node => ({ value: node.id, label: `${'　'.repeat(depthOf(node.id))}${node.name}` })))
+          })}
+          ${renderDropdown({
+            scope: 'filters',
+            field: 'priority',
+            placeholder: '全優先度',
+            selected: state.filters.priority,
+            options: [{ value: '', label: '全優先度' }].concat(priorityOptions())
+          })}
+          <div class="sync-status">${icon(syncIconName())}<span>${h(syncLabel())}</span></div>
+        </section>
+      `;
+    }
+
+    function renderMain() {
+      if (state.view === 'kanban') return renderKanban();
+      if (state.view === 'gantt') return renderGantt();
+      return renderList();
+    }
+
+    function renderKanban() {
+      const visibleCards = filteredNodes()
+        .filter(node => node.id !== state.rootId)
+        .filter(node => state.showGroupsInKanban || node.isLeaf);
+      return `
+        <section class="view">
+          <div class="view-toolbar">
+            <label class="switch"><input id="toggleGroups" type="checkbox" ${checked(state.showGroupsInKanban)}> 親ノードも表示</label>
+            <button class="button secondary" data-action="new-status">${icon('plus')}列を追加</button>
+          </div>
+          <div class="board-layout">
+            ${renderMemberRail()}
+            <div class="columns">
+              ${state.statusColumns.map(column => renderKanbanColumn(column, visibleCards)).join('')}
+            </div>
+          </div>
+        </section>
+      `;
+    }
+
+    function renderMemberRail() {
+      const activeNodes = state.nodes.filter(node => node.id !== state.rootId);
+      return `
+        <aside class="member-rail">
+          <div class="rail-title">担当者</div>
+          <button class="member-filter ${state.filters.assigneeId ? '' : 'active'}" data-action="filter-member" data-member-id="">
+            ${icon('users')}
+            <span class="member-filter-name">全員</span>
+            <span class="member-filter-count">${activeNodes.length}</span>
+          </button>
+          ${state.members.map(member => {
+            const count = activeNodes.filter(node => node.assigneeIds.includes(member.id)).length;
+            return `
+              <button class="member-filter ${state.filters.assigneeId === member.id ? 'active' : ''}" data-action="filter-member" data-member-id="${h(member.id)}">
+                ${renderAvatar(member)}
+                <span class="member-filter-name">${h(member.name)}</span>
+                <span class="member-filter-count">${count}</span>
+              </button>
+            `;
+          }).join('')}
+        </aside>
+      `;
+    }
+
+    function renderKanbanColumn(column, visibleCards) {
+      const cards = visibleCards.filter(node => node.statusColumnId === column.id);
+      return `
+        <article class="kanban-column" data-column-id="${h(column.id)}" style="--status-color:${h(column.color || defaultStatusColor(column))}">
+          <div class="status-strip"></div>
+          <header class="column-head">
+            <div class="column-title-row" draggable="true" data-column-drag="${h(column.id)}" title="ドラッグして並び替え">
+              <span class="drag-handle">${icon('grip')}</span>
+              <div class="column-title" title="${h(column.name)}">${h(column.name)}</div>
+              ${column.isDoneColumn ? '<span class="chip">完了列</span>' : ''}
+              <span class="count-badge">${cards.length}</span>
+              <button class="button compact ghost icon" data-action="new-node" data-parent-id="${h(state.rootId)}" data-status-id="${h(column.id)}" title="この列にタスクを追加">${icon('plus')}</button>
+              <button class="button compact ghost icon" data-action="edit-status" data-column-id="${h(column.id)}" title="列を編集">${icon('edit')}</button>
+            </div>
+          </header>
+          <div class="column-body ${state.dragOverColumnId === column.id ? 'drag-over' : ''}" data-drop-column="${h(column.id)}">
+            ${cards.length ? cards.map(renderCard).join('') : `<button class="empty-drop" data-action="new-node" data-parent-id="${h(state.rootId)}" data-status-id="${h(column.id)}" aria-label="タスクを追加">${icon('plus')}</button>`}
+          </div>
+        </article>
+      `;
+    }
+
+    function renderCard(node) {
+      return `
+        <article class="task-card ${state.draggingCardId === node.id ? 'dragging' : ''}" draggable="true" data-card-id="${h(node.id)}" style="--priority-color:${priorityColorVar(node.priority)}">
+          ${state.savingNodeIds.has(node.id) ? '<span class="saving-dot"></span>' : ''}
+          <div class="task-card-title">${h(node.name || '新しいタスク')}</div>
+          <div class="card-meta">
+            ${renderAvatars(node.assigneeIds)}
+            ${node.endDate ? `<span class="due-badge ${dueClass(node.endDate)}">${h(shortDate(node.endDate))}</span>` : ''}
+          </div>
+        </article>
+      `;
+    }
+
+    function renderList() {
+      const rows = visibleTreeNodes();
+      if (!rows.length) {
+        return `
+          <section class="view">
+            <div class="view-toolbar"></div>
+            <div class="empty-list"><div class="empty-list-inner"><button class="button primary" data-action="new-node" data-parent-id="${h(state.rootId)}">${icon('plus')}最初のタスクを追加</button></div></div>
+          </section>
+        `;
+      }
+      return `
+        <section class="view">
+          <div class="view-toolbar">
+            <button class="button secondary compact" data-sort-field="name">名称</button>
+            <button class="button secondary compact" data-sort-field="status">ステータス</button>
+            <button class="button secondary compact" data-sort-field="priority">優先度</button>
+            <button class="button secondary compact" data-sort-field="progress">進捗</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:40%">名称</th>
+                  <th style="width:12%">ステータス</th>
+                  <th style="width:16%">担当</th>
+                  <th style="width:10%">優先度</th>
+                  <th style="width:16%">期間</th>
+                  <th style="width:8%">進捗</th>
+                  <th style="width:44px"></th>
+                </tr>
+              </thead>
+              <tbody>${rows.map(renderListRow).join('')}</tbody>
+            </table>
+          </div>
+        </section>
+      `;
+    }
+
+    function renderListRow(node) {
+      const depth = depthOf(node.id);
+      return `
+        <tr class="${state.shellNodeId === node.id ? 'shell-node-row' : ''}" data-tree-node="${h(node.id)}" draggable="${node.id !== state.rootId}">
+          <td>
+            <div class="tree-cell">
+              <span class="indent" style="--tree-depth:${depth}"></span>
+              ${node.hasChildren ? `<button class="button ghost icon compact" data-toggle-node="${h(node.id)}">${icon(state.collapsed.has(node.id) ? 'chevron-right' : 'chevron-down')}</button>` : '<span class="button icon compact" aria-hidden="true"></span>'}
+              <span class="tree-name ${node.name ? '' : 'placeholder'}" data-open-node="${h(node.id)}">${h(node.name || '新しいタスク')}</span>
+              <button class="button ghost icon compact" data-open-node="${h(node.id)}" title="編集">${icon('edit')}</button>
+            </div>
+          </td>
+          <td>${h(statusName(node.statusColumnId))}</td>
+          <td>${renderAvatars(node.assigneeIds)}</td>
+          <td><span class="chip">${h(priorityLabel(node.priority))}</span></td>
+          <td><span class="due-badge ${dueClass(node.endDate)}">${h(formatRange(node.startDate, node.endDate))}</span></td>
+          <td class="mono">${Math.round(node.progress)}%</td>
+          <td class="row-action-cell"><button class="button ghost icon compact row-add-child" data-action="create-child-shell" data-parent-id="${h(node.id)}" title="子タスクを追加">${icon('plus')}</button></td>
+        </tr>
+      `;
+    }
+
+    function renderGantt() {
+      const rows = visibleTreeNodes();
+      const scale = ganttScale(rows);
+      const laneHeight = GANTT_CREATE_LANE_HEIGHT;
+      const height = Math.max(rows.length * GANTT_ROW_HEIGHT + laneHeight, 160);
+      const today = Math.floor(Date.now() / 86400000);
+      const todayLeft = (today - scale.startDay) * scale.dayWidth;
+      return `
+        <section class="view">
+          <div class="view-toolbar">
+            <div class="segmented">
+              ${['day', 'week', 'month'].map(zoom => `<button class="button ${state.ganttZoom === zoom ? 'active' : ''}" data-zoom="${zoom}">${zoomLabel(zoom)}</button>`).join('')}
+            </div>
+            <label class="gantt-scale-control" title="横の縮尺">
+              ${icon('scale')}
+              <input type="range" min="0.6" max="2.4" step="0.1" value="${h(state.ganttScaleFactor)}" data-gantt-scale>
+            </label>
+          </div>
+          <div class="gantt-frame">
+            <div class="gantt-left">
+              <div class="gantt-axis-left"><span>タスク名</span><span>日付範囲</span><span>日数</span></div>
+              ${renderGanttRootCreateRow()}
+              ${rows.map(renderGanttTreeRow).join('')}
+            </div>
+            <div class="gantt-right" data-day-width="${scale.dayWidth}" data-start-day="${scale.startDay}">
+              <div class="gantt-axis" style="width:${scale.width}px">${renderAxisTicks(scale)}</div>
+              <div class="gantt-canvas" style="width:${scale.width}px;height:${height}px;--day-width:${scale.dayWidth}px">
+                <div class="gantt-create-lane" data-gantt-create-parent="${h(state.rootId)}" data-gantt-row-top="0" title="ドラッグしてタスクを追加">${icon('plus')}</div>
+                ${rows.map((node, index) => `<div class="gantt-row create-target" data-gantt-create-parent="${h(node.id)}" data-gantt-row-top="${laneHeight + index * GANTT_ROW_HEIGHT}" style="top:${laneHeight + index * GANTT_ROW_HEIGHT}px"></div>`).join('')}
+                ${todayLeft >= 0 && todayLeft <= scale.width ? `<div class="today-line" style="left:${todayLeft}px"></div>` : ''}
+                ${renderGanttArrows(rows, scale, height)}
+                ${rows.map((node, index) => renderGanttBar(node, index, scale, laneHeight)).join('')}
+              </div>
+            </div>
+          </div>
+        </section>
+      `;
+    }
+
+    function renderGanttRootCreateRow() {
+      return `
+        <div class="gantt-root-create-row">
+          <button class="button ghost icon compact" data-action="create-child-shell" data-parent-id="${h(state.rootId)}" title="タスクを追加">${icon('plus')}</button>
+          <span class="tree-name placeholder">タスクを追加</span>
+        </div>
+      `;
+    }
+
+    function renderGanttTreeRow(node) {
+      return `
+        <div class="gantt-tree-row ${state.shellNodeId === node.id ? 'shell-node-row' : ''}" data-tree-node="${h(node.id)}" draggable="${node.id !== state.rootId}">
+          <div class="gantt-tree-main">
+            <span class="indent" style="--tree-depth:${depthOf(node.id)}"></span>
+            ${node.hasChildren ? `<button class="button ghost icon compact" data-toggle-node="${h(node.id)}">${icon(state.collapsed.has(node.id) ? 'chevron-right' : 'chevron-down')}</button>` : '<span class="button icon compact" aria-hidden="true"></span>'}
+            <span class="tree-name ${node.name ? '' : 'placeholder'}" data-open-node="${h(node.id)}">${h(node.name || '新しいタスク')}</span>
+            <button class="button ghost icon compact" data-open-node="${h(node.id)}" title="編集">${icon('edit')}</button>
+          </div>
+          <div class="gantt-tree-meta">${h(formatShortRange(node.startDate || node.displayStartDate, node.endDate || node.displayEndDate))}</div>
+          <div class="gantt-tree-meta">${h(durationLabel(node.startDate || node.displayStartDate, node.endDate || node.displayEndDate))}</div>
+        </div>
+      `;
+    }
+
+    function renderAxisTicks(scale) {
+      return `<div class="axis-months">${renderMonthBands(scale)}</div><div class="axis-ticks">${renderDateTicks(scale)}</div>`;
+    }
+
+    function renderMonthBands(scale) {
+      const bands = [];
+      let day = monthStartDay(scale.startDay);
+      while (day <= scale.endDay) {
+        const visibleStart = Math.max(day, scale.startDay);
+        const next = addMonthDay(day);
+        const visibleEnd = Math.min(next, scale.endDay + 1);
+        const widthDays = Math.max(1, visibleEnd - visibleStart);
+        bands.push(`<div class="axis-month" style="width:${widthDays * scale.dayWidth}px">${h(dayToDate(day).slice(0, 7))}</div>`);
+        day = next;
+      }
+      return bands.join('');
+    }
+
+    function renderDateTicks(scale) {
+      const ticks = [];
+      if (state.ganttZoom === 'month') {
+        let day = monthStartDay(scale.startDay);
+        while (day <= scale.endDay) {
+          const visibleStart = Math.max(day, scale.startDay);
+          const next = addMonthDay(day);
+          const visibleEnd = Math.min(next, scale.endDay + 1);
+          const widthDays = Math.max(1, visibleEnd - visibleStart);
+          ticks.push(`<div class="axis-tick" style="width:${widthDays * scale.dayWidth}px">${h(formatTickLabel(visibleStart))}</div>`);
+          day = next;
+        }
+        return ticks.join('');
+      }
+      const step = 7;
+      let day = alignTickDay(scale.startDay, step);
+      if (day > scale.startDay) {
+        const widthDays = day - scale.startDay;
+        ticks.push(`<div class="axis-tick" style="width:${widthDays * scale.dayWidth}px">${h(formatTickLabel(scale.startDay))}</div>`);
+      }
+      for (; day <= scale.endDay; day += step) {
+        const visibleEnd = Math.min(day + step, scale.endDay + 1);
+        const widthDays = Math.max(1, visibleEnd - day);
+        ticks.push(`<div class="axis-tick" style="width:${widthDays * scale.dayWidth}px">${h(formatTickLabel(day))}</div>`);
+      }
+      return ticks.join('');
+    }
+
+    function renderGanttBar(node, index, scale, offsetTop) {
+      const start = node.displayStartDate;
+      const end = node.displayEndDate;
+      if (!start || !end) return '';
+      const left = (dateToDay(start) - scale.startDay) * scale.dayWidth;
+      const width = Math.max(24, (dateToDay(end) - dateToDay(start) + 1) * scale.dayWidth);
+      return `
+        <div class="gantt-bar ${state.shellNodeId === node.id ? 'shell-node-bar' : ''}" data-gantt-bar="${h(node.id)}" style="left:${left}px;top:${offsetTop + index * GANTT_ROW_HEIGHT + 8}px;width:${width}px">
+          <span class="gantt-progress" style="width:${Math.max(0, Math.min(100, node.progress))}%"></span>
+          <span class="bar-handle left" data-handle="left"></span>
+          <span class="gantt-label">${h(node.name || '新しいタスク')} ${Math.round(node.progress)}%</span>
+          <span class="bar-handle right" data-handle="right"></span>
+        </div>
+      `;
+    }
+
+    function renderGanttArrows(rows, scale, height) {
+      const rowIndex = new Map(rows.map((node, index) => [node.id, index]));
+      const visible = new Set(rows.map(node => node.id));
+      const paths = [];
+      state.dependencies.forEach(dep => {
+        const fromId = visibleAnchor(dep.predecessorId, visible);
+        const toId = visibleAnchor(dep.successorId, visible);
+        const from = state.nodesById.get(fromId);
+        const to = state.nodesById.get(toId);
+        if (!from || !to || !from.displayEndDate || !to.displayStartDate || !rowIndex.has(fromId) || !rowIndex.has(toId)) return;
+        const x1 = (dateToDay(from.displayEndDate) - scale.startDay + 1) * scale.dayWidth + 2;
+        const x2 = (dateToDay(to.displayStartDate) - scale.startDay) * scale.dayWidth - 2;
+        const y1 = GANTT_CREATE_LANE_HEIGHT + rowIndex.get(fromId) * GANTT_ROW_HEIGHT + 20;
+        const y2 = GANTT_CREATE_LANE_HEIGHT + rowIndex.get(toId) * GANTT_ROW_HEIGHT + 20;
+        const mid = Math.max(x1 + 16, (x1 + x2) / 2);
+        paths.push(`<path d="M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}" fill="none" stroke="var(--color-text-tertiary)" stroke-width="1.5" marker-end="url(#arrow)"></path>`);
+      });
+      return `
+        <svg class="gantt-arrows" width="${scale.width}" height="${height}">
+          <defs>
+            <marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+              <path d="M0,0 L7,3.5 L0,7 Z" fill="var(--color-text-tertiary)"></path>
+            </marker>
+          </defs>
+          ${paths.join('')}
+        </svg>
+      `;
+    }

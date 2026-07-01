@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+<?!= include('Styles'); ?>
+  </style>
+</head>
+<body>
+  <div id="app" class="app-loading"><div class="spinner"></div></div>
+  <div id="drawerRoot"></div>
+  <div id="dialogRoot"></div>
+  <div id="toastRoot" class="toast-stack" aria-live="polite"></div>
+
+  <script>
+<?!= include('ClientState'); ?>
+<?!= include('ClientDataSync'); ?>
+<?!= include('ClientRenderViews'); ?>
+<?!= include('ClientRenderPanels'); ?>
+<?!= include('ClientBindings'); ?>
+<?!= include('ClientActions'); ?>
+<?!= include('ClientSelectors'); ?>
+<?!= include('ClientUtils'); ?>
+  </script>
+</body>
+</html>

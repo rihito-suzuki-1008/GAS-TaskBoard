@@ -1,0 +1,86 @@
+    // State, constants, icons, and global listeners.
+    const state = {
+      setupRequired: false,
+      nodes: [],
+      nodesById: new Map(),
+      members: [],
+      memberById: new Map(),
+      statusColumns: [],
+      statusById: new Map(),
+      dependencies: [],
+      commentCounts: {},
+      currentMember: null,
+      currentEmail: '',
+      rootId: '',
+      view: 'kanban',
+      filters: { query: '', parentId: '', assigneeId: '', priority: '' },
+      showGroupsInKanban: false,
+      collapsed: new Set(),
+      drawerNodeId: '',
+      detailDraftNodeId: '',
+      detailDraft: null,
+      shellNodeId: '',
+      shellBaseline: null,
+      focusDetailName: false,
+      creatingShell: false,
+      dialog: null,
+      openDropdown: '',
+      comments: new Map(),
+      commentsLoading: new Set(),
+      ganttZoom: 'day',
+      ganttScaleFactor: 1,
+      listSort: { field: 'sortOrder', dir: 1 },
+      draggedNodeId: '',
+      draggingCardId: '',
+      dragOverColumnId: '',
+      columnDragId: '',
+      ganttCreateDrag: null,
+      saveChains: new Map(),
+      latestRequestByNode: new Map(),
+      savingNodeIds: new Set(),
+      requestCounter: 0,
+      toasts: [],
+      toastCounter: 0,
+      syncStatus: 'idle',
+      lastSyncAt: '',
+      syncTimer: null
+    };
+
+    const app = document.getElementById('app');
+    const toastRoot = document.getElementById('toastRoot');
+    const LOCAL_CACHE_KEY = 'gasTaskManager.cache.v1';
+    const SYNC_INTERVAL_MS = 30000;
+    const GANTT_ROW_HEIGHT = 40;
+    const GANTT_CREATE_LANE_HEIGHT = 40;
+    const STATUS_COLOR_PRESETS = ['#98A098', '#2F6FDB', '#1E6F5C', '#B8862B', '#C24444', '#5B7A99', '#7C6EE6', '#D65C9F'];
+    const MEMBER_COLOR_PRESETS = ['#1E6F5C', '#2F6FDB', '#B8862B', '#C24444', '#5B7A99', '#7C6EE6', '#D65C9F', '#667066'];
+    const ICON_PATHS = {
+      plus: '<path d="M12 5v14"></path><path d="M5 12h14"></path>',
+      users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path>',
+      refresh: '<path d="M21 12a9 9 0 0 1-15.3 6.36"></path><path d="M3 12A9 9 0 0 1 18.3 5.64"></path><path d="M21 3v6h-6"></path><path d="M3 21v-6h6"></path>',
+      grip: '<circle cx="9" cy="5" r="1"></circle><circle cx="9" cy="12" r="1"></circle><circle cx="9" cy="19" r="1"></circle><circle cx="15" cy="5" r="1"></circle><circle cx="15" cy="12" r="1"></circle><circle cx="15" cy="19" r="1"></circle>',
+      edit: '<path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path>',
+      'arrow-right': '<path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path>',
+      x: '<path d="M18 6 6 18"></path><path d="m6 6 12 12"></path>',
+      'chevron-right': '<path d="m9 18 6-6-6-6"></path>',
+      'chevron-down': '<path d="m6 9 6 6 6-6"></path>',
+      check: '<path d="m20 6-11 11-5-5"></path>',
+      scale: '<path d="M4 19V5"></path><path d="M20 19V5"></path><path d="M8 12h8"></path><path d="m10 9-3 3 3 3"></path><path d="m14 9 3 3-3 3"></path>',
+      database: '<ellipse cx="12" cy="5" rx="8" ry="3"></ellipse><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"></path><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"></path>',
+      'check-circle': '<path d="m9 12 2 2 4-4"></path><circle cx="12" cy="12" r="9"></circle>',
+      'alert-circle': '<circle cx="12" cy="12" r="9"></circle><path d="M12 8v4"></path><path d="M12 16h.01"></path>'
+    };
+
+    function icon(name, extraClass = '') {
+      const paths = ICON_PATHS[name] || ICON_PATHS['alert-circle'];
+      return `<svg class="svg-icon ${h(extraClass)}" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
+    }
+
+    window.addEventListener('load', init);
+    document.addEventListener('keydown', handleGlobalKeydown);
+    document.addEventListener('click', event => {
+      if (state.openDropdown && !event.target.closest('.dropdown')) {
+        state.openDropdown = '';
+        render();
+      }
+    });

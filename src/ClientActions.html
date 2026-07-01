@@ -1,0 +1,752 @@
+    // User actions, mutations, shell creation, comments, and gantt drags.
+    function defaultCreateStatusId() {
+      const notStarted = state.statusColumns.find(column => column.name === '未着手');
+      return notStarted ? notStarted.id : '';
+    }
+
+    function openNodeCreateDialog(parentId, statusColumnId) {
+      if (!state.currentMember) {
+        showToast('メンバー未登録のため保存不可', 'error');
+        return;
+      }
+      state.dialog = {
+        type: 'node',
+        draft: {
+          name: '',
+          parentId: parentId || state.rootId,
+          statusColumnId: statusColumnId || defaultCreateStatusId(),
+          priority: 'Mid',
+          assigneeIds: state.currentMember ? [state.currentMember.id] : [],
+          startDate: '',
+          endDate: ''
+        }
+      };
+      render();
+    }
+
+    async function createNodeFromDialog() {
+      const dialog = state.dialog;
+      if (!dialog || dialog.type !== 'node') return;
+      if (dialog.submitting) return;
+      const draft = dialog.draft;
+      if (!draft.name.trim()) {
+        showToast('名称を入力', 'error');
+        return;
+      }
+      dialog.submitting = true;
+      render();
+      try {
+        const result = await serverCall('addNode', {
+          parentId: draft.parentId,
+          name: draft.name,
+          statusColumnId: draft.statusColumnId,
+          priority: draft.priority,
+          assigneeIds: draft.assigneeIds,
+          startDate: draft.startDate,
+          endDate: draft.endDate,
+          requestId: nextRequestId()
+        });
+        dialog.submitting = false;
+        closeDialog(false);
+        applyMutationResult(result);
+      } catch (error) {
+        dialog.submitting = false;
+        state.syncStatus = 'error';
+        showToast(error.message, 'error');
+        render();
+      }
+    }
+
+    function openStatusDialog(columnId) {
+      if (!state.currentMember) {
+        showToast('メンバー未登録のため保存不可', 'error');
+        return;
+      }
+      const column = columnId ? state.statusById.get(columnId) : null;
+      state.dialog = {
+        type: 'status',
+        draft: {
+          columnId: column ? column.id : '',
+          name: column ? column.name : '',
+          sortOrder: column ? column.sortOrder : '',
+          isDoneColumn: column ? column.isDoneColumn : false,
+          color: column ? column.color : defaultStatusColor({ name: '' })
+        }
+      };
+      render();
+    }
+
+    async function saveStatusFromDialog() {
+      const draft = state.dialog.draft;
+      if (!draft.name.trim()) {
+        showToast('列名を入力', 'error');
+        return;
+      }
+      await callAndApply('upsertStatusColumn', {
+        columnId: draft.columnId,
+        name: draft.name,
+        sortOrder: draft.sortOrder,
+        isDoneColumn: draft.isDoneColumn,
+        color: draft.color
+      }, () => closeDialog(false));
+    }
+
+    async function reorderStatusColumn(sourceId, targetId, before) {
+      const ordered = state.statusColumns.slice().sort(compareSortOrder);
+      const sourceIndex = ordered.findIndex(column => column.id === sourceId);
+      if (sourceIndex === -1) return;
+      const source = ordered[sourceIndex];
+      ordered.splice(sourceIndex, 1);
+      const targetIndex = ordered.findIndex(column => column.id === targetId);
+      if (targetIndex === -1) return;
+      const insertAt = before ? targetIndex : targetIndex + 1;
+      ordered.splice(insertAt, 0, source);
+      const prev = ordered[insertAt - 1];
+      const next = ordered[insertAt + 1];
+      const newSort = prev && next ? (prev.sortOrder + next.sortOrder) / 2 : prev ? prev.sortOrder + 1000 : next ? next.sortOrder - 1000 : 1000;
+      if (newSort === source.sortOrder) return;
+
+      // Reflect the new order in the browser immediately; the spreadsheet write
+      // happens in the background so dropping a column doesn't feel like it's
+      // waiting on a round trip. Roll back only if the write itself fails.
+      const previousSort = source.sortOrder;
+      source.sortOrder = newSort;
+      rebuildIndexes();
+      render();
+
+      await callAndApply('upsertStatusColumn', {
+        columnId: source.id,
+        name: source.name,
+        sortOrder: newSort,
+        isDoneColumn: source.isDoneColumn,
+        color: source.color
+      }, null, () => {
+        source.sortOrder = previousSort;
+        rebuildIndexes();
+      });
+    }
+
+    function confirmStatusDelete(columnId) {
+      const column = state.statusById.get(columnId);
+      if (!column) return;
+      state.dialog = { type: 'confirmStatusDelete', columnId, name: column.name };
+      render();
+    }
+
+    async function deleteStatusConfirmed() {
+      const columnId = state.dialog && state.dialog.columnId;
+      if (!columnId) return;
+      await callAndApply('deleteStatusColumn', { columnId }, () => closeDialog(false));
+    }
+
+    function openMembersDialog() {
+      state.dialog = {
+        type: 'members',
+        draft: { memberId: '', name: '', email: '', color: defaultMemberColor() }
+      };
+      render();
+    }
+
+    async function saveMemberFromDialog() {
+      const draft = state.dialog.draft;
+      if (!draft.name.trim() || !draft.email.trim()) {
+        showToast('氏名とメールを入力', 'error');
+        return;
+      }
+      await callAndApply('upsertMember', {
+        memberId: draft.memberId,
+        name: draft.name,
+        email: draft.email,
+        color: draft.color
+      }, () => {
+        state.dialog.draft = { memberId: '', name: '', email: '', color: defaultMemberColor() };
+      });
+    }
+
+    function editMemberDraft(memberId) {
+      const member = state.memberById.get(memberId);
+      if (!member || !state.dialog || state.dialog.type !== 'members') return;
+      state.dialog.draft = {
+        memberId: member.id,
+        name: member.name,
+        email: member.email,
+        color: member.color || defaultMemberColor()
+      };
+      render();
+    }
+
+    function clearMemberDraft() {
+      if (!state.dialog || state.dialog.type !== 'members') return;
+      state.dialog.draft = { memberId: '', name: '', email: '', color: defaultMemberColor() };
+      render();
+    }
+
+    function confirmMemberDelete(memberId) {
+      const member = state.memberById.get(memberId);
+      if (!member) return;
+      state.dialog = {
+        type: 'confirmMemberDelete',
+        memberId,
+        name: member.name,
+        confirmSelf: state.currentMember && state.currentMember.id === memberId
+      };
+      render();
+    }
+
+    async function deleteMemberConfirmed() {
+      const dialog = state.dialog;
+      if (!dialog || !dialog.memberId) return;
+      if (dialog.confirmSelf && !dialog.selfConfirmed) {
+        showToast('自分自身の削除確認が必要', 'warning');
+        return;
+      }
+      await callAndApply('deleteMember', {
+        memberId: dialog.memberId,
+        confirmSelf: Boolean(dialog.confirmSelf)
+      }, () => closeDialog(false));
+    }
+
+    function openNode(nodeId, options = {}) {
+      const node = state.nodesById.get(nodeId);
+      if (!node) return;
+      state.drawerNodeId = nodeId;
+      initializeDetailDraft(node);
+      if (options.shell) {
+        state.shellNodeId = nodeId;
+        state.shellBaseline = detailSnapshotFromNode(node);
+      }
+      if (options.focusName) {
+        state.focusDetailName = true;
+      }
+      render();
+    }
+
+    function closeDrawer(options = {}) {
+      const shellAction = options.skipShellCleanup ? null : prepareShellCloseAction();
+      if (shellAction === 'keep-open') return;
+      state.drawerNodeId = '';
+      state.detailDraftNodeId = '';
+      state.detailDraft = null;
+      state.openDropdown = '';
+      state.focusDetailName = false;
+      render();
+      if (shellAction && shellAction.type === 'delete') {
+        deleteShellNode(shellAction.nodeId);
+      }
+      if (shellAction && shellAction.type === 'save') {
+        saveNodePatch(shellAction.nodeId, shellAction.patch, shellAction.optimisticApply);
+      }
+    }
+
+    function closeDialog(shouldRender = true) {
+      // Closing while a submit is in flight is allowed on purpose: the request still
+      // completes and its result still merges in via applyMutationResult, and locking
+      // the whole dialog would amount to a blocking spinner, which this app avoids in
+      // favor of small, scoped indicators (only the submit button itself locks).
+      state.dialog = null;
+      state.openDropdown = '';
+      if (shouldRender) render();
+    }
+
+    async function createChildShell(parentId, options = {}) {
+      if (!state.currentMember) {
+        showToast('メンバー未登録のため保存不可', 'error');
+        return;
+      }
+      if (state.creatingShell) return;
+      const parent = state.nodesById.get(parentId);
+      if (!parent) return;
+      state.creatingShell = true;
+      state.syncStatus = 'pending';
+      render();
+      try {
+        const result = await serverCall('addNode', {
+          parentId,
+          name: '',
+          isShell: true,
+          statusColumnId: defaultCreateStatusId(),
+          priority: 'Mid',
+          assigneeIds: state.currentMember ? [state.currentMember.id] : [],
+          startDate: options.startDate || '',
+          endDate: options.endDate || '',
+          requestId: nextRequestId()
+        });
+        state.creatingShell = false;
+        state.collapsed.delete(parentId);
+        applyMutationResult(result);
+        const nodeId = result.createdNodeId;
+        if (nodeId) {
+          openNode(nodeId, { shell: true, focusName: true });
+        }
+      } catch (error) {
+        state.creatingShell = false;
+        state.syncStatus = 'error';
+        showToast(error.message, 'error');
+        render();
+      }
+    }
+
+    function prepareShellCloseAction() {
+      if (!state.shellNodeId || state.drawerNodeId !== state.shellNodeId) return null;
+      const node = state.nodesById.get(state.shellNodeId);
+      const draft = state.detailDraft;
+      const baseline = state.shellBaseline;
+      if (!node || !draft || !baseline) {
+        clearShellTracking();
+        return null;
+      }
+      const current = detailSnapshotFromDraft(draft);
+      const untouched = sameDetailSnapshot(current, baseline);
+      if (!current.name && untouched) {
+        const nodeId = state.shellNodeId;
+        clearShellTracking();
+        return { type: 'delete', nodeId };
+      }
+      if (!current.name) {
+        showToast('名称を入力', 'warning');
+        state.focusDetailName = true;
+        focusDetailNameInput();
+        return 'keep-open';
+      }
+      const nodeId = state.shellNodeId;
+      const patch = detailPatchFromSnapshot(current);
+      clearShellTracking();
+      return {
+        type: 'save',
+        nodeId,
+        patch,
+        optimisticApply: () => {
+          const target = state.nodesById.get(nodeId);
+          if (!target) return;
+          Object.assign(target, {
+            name: patch.name,
+            statusColumnId: patch.statusColumnId,
+            priority: patch.priority,
+            assigneeIds: patch.assigneeIds.slice(),
+            startDate: patch.startDate,
+            endDate: patch.endDate,
+            description: patch.description
+          });
+        }
+      };
+    }
+
+    async function deleteShellNode(nodeId) {
+      try {
+        const result = await serverCall('deleteNode', { nodeId, requestId: nextRequestId() });
+        applyMutationResult(result);
+      } catch (error) {
+        state.syncStatus = 'error';
+        showToast(error.message, 'error');
+        render();
+      }
+    }
+
+    function clearShellTracking() {
+      state.shellNodeId = '';
+      state.shellBaseline = null;
+    }
+
+    function detailSnapshotFromNode(node) {
+      return {
+        name: cleanText(node.name),
+        statusColumnId: node.statusColumnId || '',
+        priority: node.priority || 'Mid',
+        assigneeIds: (node.assigneeIds || []).slice(),
+        startDate: node.startDate || '',
+        endDate: node.endDate || '',
+        description: node.description || ''
+      };
+    }
+
+    function detailSnapshotFromDraft(draft) {
+      return {
+        name: cleanText(draft.name),
+        statusColumnId: draft.statusColumnId || '',
+        priority: draft.priority || 'Mid',
+        assigneeIds: (draft.assigneeIds || []).slice(),
+        startDate: draft.startDate || '',
+        endDate: draft.endDate || '',
+        description: draft.description || ''
+      };
+    }
+
+    function detailPatchFromSnapshot(snapshot) {
+      return {
+        name: snapshot.name,
+        statusColumnId: snapshot.statusColumnId,
+        priority: snapshot.priority,
+        assigneeIds: snapshot.assigneeIds.slice(),
+        startDate: snapshot.startDate,
+        endDate: snapshot.endDate,
+        description: snapshot.description
+      };
+    }
+
+    function sameDetailSnapshot(a, b) {
+      return a.name === b.name
+        && a.statusColumnId === b.statusColumnId
+        && a.priority === b.priority
+        && a.startDate === b.startDate
+        && a.endDate === b.endDate
+        && a.description === b.description
+        && a.assigneeIds.join(',') === b.assigneeIds.join(',');
+    }
+
+    function focusDetailNameInput() {
+      requestAnimationFrame(() => {
+        const input = document.querySelector('[data-detail-name-input]');
+        if (!input) return;
+        input.focus();
+        input.select();
+      });
+    }
+
+    function initializeDetailDraft(node) {
+      state.detailDraftNodeId = node.id;
+      state.detailDraft = {
+        name: node.name,
+        statusColumnId: node.statusColumnId,
+        priority: node.priority,
+        assigneeIds: node.assigneeIds.slice(),
+        startDate: node.startDate,
+        endDate: node.endDate,
+        description: node.description,
+        dependency: { predecessorId: '', successorId: '' }
+      };
+    }
+
+    function ensureDetailDraft(nodeId) {
+      const node = state.nodesById.get(nodeId);
+      if (!node) return;
+      if (state.detailDraftNodeId !== nodeId || !state.detailDraft) {
+        initializeDetailDraft(node);
+      }
+    }
+
+    function syncDetailDraftAfterMutation() {
+      if (!state.drawerNodeId || !state.detailDraft) return;
+      const node = state.nodesById.get(state.drawerNodeId);
+      if (!node) return;
+      if (state.detailDraftNodeId !== node.id) initializeDetailDraft(node);
+    }
+
+    function saveDetail() {
+      const node = state.nodesById.get(state.drawerNodeId);
+      const draft = state.detailDraft;
+      if (!node || !draft) return;
+      if (!cleanText(draft.name)) {
+        showToast('名称を入力', 'warning');
+        state.focusDetailName = true;
+        focusDetailNameInput();
+        return;
+      }
+      const patch = {
+        name: cleanText(draft.name),
+        statusColumnId: draft.statusColumnId,
+        priority: draft.priority,
+        assigneeIds: draft.assigneeIds,
+        startDate: draft.startDate,
+        endDate: draft.endDate,
+        description: draft.description
+      };
+      if (state.shellNodeId === node.id) {
+        clearShellTracking();
+      }
+      saveNodePatch(node.id, patch, () => {
+        Object.assign(node, {
+          name: patch.name,
+          statusColumnId: patch.statusColumnId,
+          priority: patch.priority,
+          assigneeIds: patch.assigneeIds.slice(),
+          startDate: patch.startDate,
+          endDate: patch.endDate,
+          description: patch.description
+        });
+      });
+    }
+
+    function fitChildren(nodeId) {
+      queueNodeMutation(nodeId, 'fitNodeToChildren', () => ({
+        nodeId,
+        baseUpdatedAt: currentUpdatedAt(nodeId)
+      }));
+    }
+
+    function confirmNodeDelete(nodeId) {
+      const node = state.nodesById.get(nodeId);
+      if (!node) return;
+      state.dialog = {
+        type: 'confirmNodeDelete',
+        nodeId,
+        count: collectDescendants(nodeId).length + 1
+      };
+      render();
+    }
+
+    async function deleteNodeConfirmed() {
+      const nodeId = state.dialog && state.dialog.nodeId;
+      if (!nodeId) return;
+      await callAndApply('deleteNode', { nodeId, requestId: nextRequestId() }, () => {
+        closeDialog(false);
+        if (state.drawerNodeId === nodeId) closeDrawer({ skipShellCleanup: true });
+      });
+    }
+
+    async function addPredecessor() {
+      const node = state.nodesById.get(state.drawerNodeId);
+      const predecessorId = dependencyDraft().predecessorId;
+      if (!node || !predecessorId) return;
+      await callAndApply('addDependency', { predecessorId, successorId: node.id, requestId: nextRequestId() }, () => {
+        dependencyDraft().predecessorId = '';
+      });
+    }
+
+    async function addSuccessor() {
+      const node = state.nodesById.get(state.drawerNodeId);
+      const successorId = dependencyDraft().successorId;
+      if (!node || !successorId) return;
+      await callAndApply('addDependency', { predecessorId: node.id, successorId, requestId: nextRequestId() }, () => {
+        dependencyDraft().successorId = '';
+      });
+    }
+
+    function confirmDependencyDelete(dependencyId) {
+      state.dialog = { type: 'confirmDependencyDelete', dependencyId };
+      render();
+    }
+
+    async function deleteDependencyConfirmed() {
+      const dependencyId = state.dialog && state.dialog.dependencyId;
+      if (!dependencyId) return;
+      await callAndApply('deleteDependency', { dependencyId, requestId: nextRequestId() }, () => closeDialog(false));
+    }
+
+    function saveNodePatch(nodeId, patch, optimisticApply) {
+      queueNodeMutation(nodeId, 'saveNode', () => ({
+        nodeId,
+        baseUpdatedAt: currentUpdatedAt(nodeId),
+        patch
+      }), optimisticApply);
+    }
+
+    function queueNodeMutation(nodeId, apiName, payloadFactory, optimisticApply) {
+      if (!state.currentMember) {
+        showToast('メンバー未登録のため保存不可', 'error');
+        return Promise.resolve();
+      }
+      const before = cloneNode(state.nodesById.get(nodeId));
+      if (optimisticApply) {
+        optimisticApply();
+        state.syncStatus = 'pending';
+        persistLocalCache();
+      }
+      state.savingNodeIds.add(nodeId);
+      rebuildIndexes();
+      render();
+      const previous = state.saveChains.get(nodeId) || Promise.resolve();
+      const chain = previous.catch(() => {}).then(async () => {
+        const requestId = nextRequestId();
+        state.latestRequestByNode.set(nodeId, requestId);
+        const payload = payloadFactory();
+        payload.requestId = requestId;
+        const result = await serverCall(apiName, payload);
+        if (result.requestId && state.latestRequestByNode.get(nodeId) !== result.requestId) return;
+        applyMutationResult(result);
+      }).catch(error => {
+        if (before) mergeNodes([before]);
+        rebuildIndexes();
+        state.syncStatus = 'error';
+        persistLocalCache();
+        showToast(error.message, 'error');
+        render();
+      }).finally(() => {
+        if (state.saveChains.get(nodeId) === chain) state.savingNodeIds.delete(nodeId);
+        render();
+      });
+      state.saveChains.set(nodeId, chain);
+      return chain;
+    }
+
+    async function callAndApply(apiName, payload, beforeApply, onError) {
+      if (!state.currentMember && apiName !== 'setupProject') {
+        showToast('メンバー未登録のため保存不可', 'error');
+        if (onError) onError();
+        return;
+      }
+      const dialog = state.dialog;
+      if (dialog) {
+        if (dialog.submitting) return;
+        dialog.submitting = true;
+        render();
+      }
+      try {
+        const result = await serverCall(apiName, payload || {});
+        if (dialog) dialog.submitting = false;
+        if (beforeApply) beforeApply(result);
+        applyMutationResult(result);
+      } catch (error) {
+        if (dialog) dialog.submitting = false;
+        state.syncStatus = 'error';
+        showToast(error.message, 'error');
+        if (onError) onError();
+        render();
+      }
+    }
+
+    async function reloadAll() {
+      await syncFromServer({ force: true });
+    }
+
+    async function loadComments(nodeId) {
+      state.commentsLoading.add(nodeId);
+      try {
+        const comments = await serverCall('getComments', nodeId);
+        state.comments.set(nodeId, comments);
+      } catch (error) {
+        showToast(error.message, 'error');
+      } finally {
+        state.commentsLoading.delete(nodeId);
+        if (state.drawerNodeId === nodeId) render();
+      }
+    }
+
+    async function postComment() {
+      const nodeId = state.drawerNodeId;
+      const textarea = document.getElementById('commentText');
+      const text = textarea ? textarea.value.trim() : '';
+      if (!text) return;
+      try {
+        const result = await serverCall('addComment', { nodeId, text });
+        const comments = state.comments.get(nodeId) || [];
+        comments.push(result.comment);
+        state.comments.set(nodeId, comments);
+        state.commentCounts[nodeId] = comments.length;
+        state.syncStatus = 'synced';
+        state.lastSyncAt = new Date().toISOString();
+        persistLocalCache();
+        render();
+      } catch (error) {
+        state.syncStatus = 'error';
+        showToast(error.message, 'error');
+        render();
+      }
+    }
+
+    function moveNodeTo(nodeId, newParentId) {
+      const node = state.nodesById.get(nodeId);
+      if (!node || node.id === state.rootId || node.parentId === newParentId) return;
+      const oldParentId = node.parentId;
+      queueNodeMutation(nodeId, 'moveNode', () => ({
+        nodeId,
+        newParentId,
+        baseUpdatedAt: currentUpdatedAt(nodeId)
+      }), () => {
+        node.parentId = newParentId;
+      }).catch(() => {
+        node.parentId = oldParentId;
+      });
+    }
+
+    function startGanttCreateDrag(event) {
+      if (!state.currentMember || state.creatingShell) return;
+      if (event.target.closest('.gantt-bar')) return;
+      const row = event.currentTarget;
+      const parentId = row.dataset.ganttCreateParent;
+      const right = row.closest('.gantt-right');
+      const canvas = row.closest('.gantt-canvas');
+      if (!parentId || !right || !canvas) return;
+      const dayWidth = Number(right.dataset.dayWidth);
+      const scaleStart = Number(right.dataset.startDay);
+      const rowTop = Number(row.dataset.ganttRowTop) || 0;
+      const canvasRect = canvas.getBoundingClientRect();
+      const initialX = event.clientX;
+      let moved = false;
+      let preview = null;
+      event.preventDefault();
+      row.setPointerCapture(event.pointerId);
+
+      const updatePreview = moveEvent => {
+        const x1 = Math.max(0, Math.min(initialX - canvasRect.left + right.scrollLeft, canvas.scrollWidth));
+        const x2 = Math.max(0, Math.min(moveEvent.clientX - canvasRect.left + right.scrollLeft, canvas.scrollWidth));
+        const left = Math.min(x1, x2);
+        const width = Math.max(dayWidth, Math.abs(x2 - x1));
+        moved = moved || Math.abs(moveEvent.clientX - initialX) >= 4;
+        if (!preview) {
+          preview = document.createElement('div');
+          preview.className = 'gantt-create-preview';
+          preview.style.top = `${rowTop + 8}px`;
+          canvas.appendChild(preview);
+        }
+        preview.style.left = `${left}px`;
+        preview.style.width = `${width}px`;
+      };
+
+      const onMove = moveEvent => updatePreview(moveEvent);
+      const onUp = upEvent => {
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+        if (preview) preview.remove();
+        if (!moved) return;
+        const x1 = Math.max(0, initialX - canvasRect.left + right.scrollLeft);
+        const x2 = Math.max(0, upEvent.clientX - canvasRect.left + right.scrollLeft);
+        const startOffset = Math.floor(Math.min(x1, x2) / dayWidth);
+        const endOffset = Math.floor(Math.max(x1, x2) / dayWidth);
+        createChildShell(parentId, {
+          startDate: dayToDate(scaleStart + startOffset),
+          endDate: dayToDate(scaleStart + Math.max(startOffset, endOffset))
+        });
+      };
+
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+    }
+
+    function startGanttDrag(event) {
+      const bar = event.currentTarget;
+      const node = state.nodesById.get(bar.dataset.ganttBar);
+      if (!node || !state.currentMember) return;
+      const right = bar.closest('.gantt-right');
+      const dayWidth = Number(right.dataset.dayWidth);
+      const mode = event.target.dataset.handle || 'move';
+      const initialX = event.clientX;
+      const initialStart = dateToDay(node.startDate || node.displayStartDate);
+      const initialEnd = dateToDay(node.endDate || node.displayEndDate);
+      if (!initialStart || !initialEnd) return;
+      let nextStart = initialStart;
+      let nextEnd = initialEnd;
+      event.preventDefault();
+      bar.setPointerCapture(event.pointerId);
+      const onMove = moveEvent => {
+        const delta = Math.round((moveEvent.clientX - initialX) / dayWidth);
+        if (mode === 'left') {
+          nextStart = Math.min(initialEnd, initialStart + delta);
+          nextEnd = initialEnd;
+        } else if (mode === 'right') {
+          nextStart = initialStart;
+          nextEnd = Math.max(initialStart, initialEnd + delta);
+        } else {
+          nextStart = initialStart + delta;
+          nextEnd = initialEnd + delta;
+        }
+        const scaleStart = Number(right.dataset.startDay);
+        bar.style.left = `${(nextStart - scaleStart) * dayWidth}px`;
+        bar.style.width = `${Math.max(24, (nextEnd - nextStart + 1) * dayWidth)}px`;
+      };
+      const onUp = () => {
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+        const startDate = dayToDate(nextStart);
+        const endDate = dayToDate(nextEnd);
+        if (startDate !== node.startDate || endDate !== node.endDate) {
+          saveNodePatch(node.id, { startDate, endDate }, () => {
+            node.startDate = startDate;
+            node.endDate = endDate;
+            node.displayStartDate = startDate;
+            node.displayEndDate = endDate;
+          });
+        }
+      };
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+    }
