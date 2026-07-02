@@ -57,7 +57,7 @@
                 </div>
                 <div class="inline-actions">
                   ${parent ? `<button class="button secondary compact" data-open-node="${h(parent.id)}">親: ${h(parent.name)}</button>` : ''}
-                  <button class="button secondary compact" data-action="new-node" data-parent-id="${h(node.id)}">子を追加</button>
+                  ${canCreateChild(node) ? `<button class="button secondary compact" data-action="create-child-shell" data-parent-id="${h(node.id)}">子を追加</button>` : ''}
                   ${node.hasChildren ? `<button class="button secondary compact" data-action="fit-children" data-node-id="${h(node.id)}">子に合わせる</button>` : ''}
                   ${node.id !== state.rootId ? `<button class="button destructive compact" data-action="confirm-node-delete" data-node-id="${h(node.id)}">タスクを削除</button>` : ''}
                 </div>
@@ -79,6 +79,7 @@
             </div>
             <footer class="drawer-foot">
               <button class="button secondary" data-action="close-drawer">閉じる</button>
+              ${node.id !== state.rootId ? `<button class="button secondary" data-action="save-detail-next" ${state.currentMember ? '' : 'disabled'}>${icon('plus')}保存して次を追加</button>` : ''}
               <button class="button primary" data-action="save-detail" ${state.currentMember ? '' : 'disabled'}>保存</button>
             </footer>
           </aside>

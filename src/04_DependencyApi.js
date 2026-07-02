@@ -5,7 +5,7 @@
 function addDependency(payload) {
   payload = payload || {};
   return withLock_(function () {
-    ensureSchema_();
+    requireSchemaExists_();
     const actor = requireCurrentMember_();
     const requestId = cleanString_(payload.requestId);
     let rows = readAll_();
@@ -46,7 +46,7 @@ function addDependency(payload) {
 function deleteDependency(payload) {
   payload = payload || {};
   return withLock_(function () {
-    ensureSchema_();
+    requireSchemaExists_();
     requireCurrentMember_();
     const rows = readAll_();
     const dependencyId = cleanString_(payload.dependencyId);

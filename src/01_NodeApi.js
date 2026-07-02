@@ -5,7 +5,7 @@
 function addNode(payload) {
   payload = payload || {};
   return withLock_(function () {
-    ensureSchema_();
+    requireSchemaExists_();
     const actor = requireCurrentMember_();
     const rows = readAll_();
     const active = activeNodes_(rows.nodes);
@@ -14,6 +14,9 @@ function addNode(payload) {
     const parent = nodesById[parentId];
     if (!parent) {
       throw new Error('親ノードが見つかりません。');
+    }
+    if (nodeHasDependency_(parentId, rows.dependencies, nodesById)) {
+      throw new Error('依存関係を持つ末端ノードには子タスクを追加できません。');
     }
 
     const statusColumns = sortByOrder_(rows.statusColumns);
@@ -57,7 +60,7 @@ function addNode(payload) {
 function saveNode(payload) {
   payload = payload || {};
   return withLock_(function () {
-    ensureSchema_();
+    requireSchemaExists_();
     const actor = requireCurrentMember_();
     const requestId = cleanString_(payload.requestId);
     const patch = payload.patch || {};
@@ -109,7 +112,7 @@ function saveNode(payload) {
 function moveNode(payload) {
   payload = payload || {};
   return withLock_(function () {
-    ensureSchema_();
+    requireSchemaExists_();
     const actor = requireCurrentMember_();
     const requestId = cleanString_(payload.requestId);
     let rows = readAll_();
@@ -163,7 +166,7 @@ function moveNode(payload) {
 function deleteNode(payload) {
   payload = payload || {};
   return withLock_(function () {
-    ensureSchema_();
+    requireSchemaExists_();
     const actor = requireCurrentMember_();
     const rows = readAll_();
     const active = activeNodes_(rows.nodes);
@@ -199,7 +202,7 @@ function deleteNode(payload) {
 function fitNodeToChildren(payload) {
   payload = payload || {};
   return withLock_(function () {
-    ensureSchema_();
+    requireSchemaExists_();
     const actor = requireCurrentMember_();
     const requestId = cleanString_(payload.requestId);
     let rows = readAll_();

@@ -1,2 +1,4 @@
 # testフォルダを削除
 tests/
+
+.clasp.json

@@ -18,6 +18,15 @@ function ensureSchema_() {
   });
 }
 
+function requireSchemaExists_() {
+  const ss = SpreadsheetApp.getActive();
+  Object.keys(HEADERS).forEach(function (sheetName) {
+    if (!ss.getSheetByName(sheetName)) {
+      throw new Error('必要なシートが見つかりません。先に全体読み込みまたは初回セットアップを実行してください。');
+    }
+  });
+}
+
 function ensureSheet_(sheetName) {
   const ss = SpreadsheetApp.getActive();
   let sheet = ss.getSheetByName(sheetName);

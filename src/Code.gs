@@ -27,6 +27,7 @@ function loadAll() {
       ok: true,
       setupRequired: true,
       currentEmail: getCurrentEmail_(),
+      spreadsheetId: SpreadsheetApp.getActive().getId(),
       version: APP_VERSION
     };
   }

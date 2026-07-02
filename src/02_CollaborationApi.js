@@ -3,7 +3,7 @@
  */
 
 function getComments(nodeId) {
-  ensureSchema_();
+  requireSchemaExists_();
   const rows = readAll_();
   const active = activeNodes_(rows.nodes);
   if (!byId_(active, 'NodeId')[cleanString_(nodeId)]) {
@@ -18,7 +18,7 @@ function getComments(nodeId) {
 function addComment(payload) {
   payload = payload || {};
   return withLock_(function () {
-    ensureSchema_();
+    requireSchemaExists_();
     const actor = requireCurrentMember_();
     const rows = readAll_();
     const activeMap = byId_(activeNodes_(rows.nodes), 'NodeId');
@@ -47,14 +47,15 @@ function addComment(payload) {
       Text: text
     };
     appendObject_(SHEET.COMMENTS, comment);
-    return { ok: true, comment: clientComment_(comment), nodeId: nodeId };
+    const freshRows = readAll_();
+    return { ok: true, comment: clientComment_(comment), nodeId: nodeId, commentCounts: commentCounts_(freshRows) };
   });
 }
 
 function upsertMember(payload) {
   payload = payload || {};
   return withLock_(function () {
-    ensureSchema_();
+    requireSchemaExists_();
     requireCurrentMember_();
     const rows = readAll_();
     const memberId = cleanString_(payload.memberId);
@@ -97,7 +98,7 @@ function upsertMember(payload) {
 function deleteMember(payload) {
   payload = payload || {};
   return withLock_(function () {
-    ensureSchema_();
+    requireSchemaExists_();
     const actor = requireCurrentMember_();
     const rows = readAll_();
     const memberId = cleanString_(payload.memberId);

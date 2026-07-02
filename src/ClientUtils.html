@@ -35,7 +35,7 @@
 
     function dueClass(endDate) {
       if (!endDate) return '';
-      const diff = dateToDay(endDate) - Math.floor(Date.now() / 86400000);
+      const diff = dateToDay(endDate) - localTodayDay();
       if (diff < 0) return 'overdue';
       if (diff <= 3) return 'soon';
       return '';
@@ -143,6 +143,14 @@
       return `${y}-${m}-${d}`;
     }
 
+    function localTodayDay() {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const d = String(now.getDate()).padStart(2, '0');
+      return dateToDay(`${y}-${m}-${d}`);
+    }
+
     function checked(condition) {
       return condition ? 'checked' : '';
     }
@@ -181,6 +189,22 @@
     function normalizeHex(value) {
       const color = String(value || '').trim();
       return /^#[0-9a-fA-F]{6}$/.test(color) ? color.toUpperCase() : '';
+    }
+
+    function nodeHasDependency(nodeId) {
+      return state.dependencies.some(dep => dep.predecessorId === nodeId || dep.successorId === nodeId);
+    }
+
+    function canCreateChild(node) {
+      return !!node && !nodeHasDependency(node.id);
+    }
+
+    function hasPendingMutations() {
+      return state.pendingMutationCount > 0 || state.savingNodeIds.size > 0;
+    }
+
+    function hasActiveFilters() {
+      return Boolean(state.filters.query.trim() || state.filters.parentId || state.filters.assigneeId || state.filters.priority);
     }
 
     function syncIconName() {
@@ -262,7 +286,7 @@
 
     function showToast(message, type = 'success', options = {}) {
       const id = `toast-${++state.toastCounter}`;
-      const toast = { id, message, type, sticky: Boolean(options.sticky), actionLabel: options.actionLabel || '' };
+      const toast = { id, message, type, sticky: Boolean(options.sticky), actionLabel: options.actionLabel || '', action: options.action || null };
       state.toasts.push(toast);
       renderToasts();
       if (!toast.sticky) {
@@ -281,7 +305,7 @@
           <div class="toast-bar"></div>
           <div class="toast-message">${h(toast.message)}</div>
           <div class="toast-actions">
-            ${toast.actionLabel ? `<button class="button secondary compact" data-toast-dismiss="${h(toast.id)}">${h(toast.actionLabel)}</button>` : ''}
+            ${toast.actionLabel ? `<button class="button secondary compact" data-toast-action="${h(toast.id)}">${h(toast.actionLabel)}</button>` : ''}
             <button class="button ghost icon compact" data-toast-dismiss="${h(toast.id)}">${icon('x')}</button>
           </div>
         </div>
@@ -289,6 +313,18 @@
       toastRoot.querySelectorAll('[data-toast-dismiss]').forEach(button => {
         button.addEventListener('click', () => dismissToast(button.dataset.toastDismiss));
       });
+      toastRoot.querySelectorAll('[data-toast-action]').forEach(button => {
+        button.addEventListener('click', () => runToastAction(button.dataset.toastAction));
+      });
+    }
+
+    function runToastAction(id) {
+      const toast = state.toasts.find(item => item.id === id);
+      dismissToast(id);
+      if (!toast || !toast.action) return;
+      if (toast.action.type === 'openNode' && toast.action.nodeId) {
+        openNode(toast.action.nodeId);
+      }
     }
 
     function toastColor(type) {

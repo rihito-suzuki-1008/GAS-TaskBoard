@@ -219,6 +219,13 @@
           render();
         });
       }
+      const right = document.querySelector('.gantt-right');
+      const leftBody = document.querySelector('.gantt-left-body');
+      if (right && leftBody) {
+        right.addEventListener('scroll', () => {
+          leftBody.style.transform = `translateY(${-right.scrollTop}px)`;
+        });
+      }
       document.querySelectorAll('[data-gantt-bar]').forEach(bar => {
         bar.addEventListener('pointerdown', startGanttDrag);
         bar.addEventListener('click', event => {
@@ -226,7 +233,7 @@
           openNode(bar.dataset.ganttBar);
         });
       });
-      document.querySelectorAll('[data-gantt-create-parent]').forEach(row => {
+      document.querySelectorAll('[data-gantt-create-parent], [data-gantt-schedule-node]').forEach(row => {
         row.addEventListener('pointerdown', startGanttCreateDrag);
       });
     }
@@ -235,6 +242,17 @@
       const action = event.currentTarget.dataset.action;
       if (action === 'reload' || action === 'force-sync') return syncFromServer({ force: true });
       if (action === 'create-child-shell') return createChildShell(event.currentTarget.dataset.parentId);
+      if (action === 'clear-filter') {
+        const field = event.currentTarget.dataset.filterField;
+        if (field && Object.prototype.hasOwnProperty.call(state.filters, field)) state.filters[field] = '';
+        render();
+        return;
+      }
+      if (action === 'clear-filters') {
+        state.filters = { query: '', parentId: '', assigneeId: '', priority: '' };
+        render();
+        return;
+      }
       if (action === 'filter-member') {
         state.filters.assigneeId = event.currentTarget.dataset.memberId || '';
         render();
@@ -256,6 +274,7 @@
       if (action === 'close-dialog') return closeDialog();
       if (action === 'close-drawer') return closeDrawer();
       if (action === 'save-detail') return saveDetail();
+      if (action === 'save-detail-next') return saveDetail({ createNext: true });
       if (action === 'fit-children') return fitChildren(event.currentTarget.dataset.nodeId);
       if (action === 'confirm-node-delete') return confirmNodeDelete(event.currentTarget.dataset.nodeId);
       if (action === 'delete-node') return deleteNodeConfirmed();
@@ -279,6 +298,12 @@
       const target = draftForScope(scope);
       if (!target) return;
       target[field] = value;
+    }
+
+    function handleDetailNameKeydown(event) {
+      if (event.key !== 'Enter' || event.isComposing) return;
+      event.preventDefault();
+      saveDetail(event.metaKey || event.ctrlKey ? { createNext: true } : { closeAfter: true });
     }
 
     function setDropdownValue(scope, field, value, multi) {
@@ -312,6 +337,7 @@
 
     function handleGlobalKeydown(event) {
       if (event.key !== 'Escape') return;
+      if (state.ganttCreateDrag) return;
       if (state.openDropdown) {
         state.openDropdown = '';
         render();

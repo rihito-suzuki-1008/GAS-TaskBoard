@@ -1,5 +1,9 @@
     // Main shell, board, list, and gantt rendering.
     function render() {
+      if (state.ganttCreateDrag) {
+        state.renderDeferred = true;
+        return;
+      }
       if (state.setupRequired) {
         renderSetup();
         return;
@@ -31,6 +35,23 @@
       renderDrawerRoot();
       renderDialogRoot();
       renderToasts();
+      flushPendingNodeScroll();
+    }
+
+    function finishDeferredRender() {
+      if (!state.renderDeferred) return;
+      state.renderDeferred = false;
+      render();
+    }
+
+    function flushPendingNodeScroll() {
+      if (!state.scrollToNodeId) return;
+      const nodeId = state.scrollToNodeId;
+      state.scrollToNodeId = '';
+      requestAnimationFrame(() => {
+        const target = document.querySelector(`[data-tree-node="${cssEscape(nodeId)}"], [data-gantt-bar="${cssEscape(nodeId)}"]`);
+        if (target) target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      });
     }
 
     // Dialog/drawer are mounted into their own persistent root elements instead of
@@ -126,6 +147,9 @@
           openNode(element.dataset.openNode);
         });
       });
+      root.querySelectorAll('[data-detail-name-input]').forEach(input => {
+        bindOnce(input, 'keydown', handleDetailNameKeydown);
+      });
     }
 
     function bindDialogForms() {
@@ -177,8 +201,31 @@
             selected: state.filters.priority,
             options: [{ value: '', label: '全優先度' }].concat(priorityOptions())
           })}
-          <div class="sync-status">${icon(syncIconName())}<span>${h(syncLabel())}</span></div>
+          <button class="sync-status" type="button" data-action="force-sync" title="同期">${icon(syncIconName())}<span>${h(syncLabel())}</span></button>
+          ${renderActiveFilterChips()}
         </section>
+      `;
+    }
+
+    function renderActiveFilterChips() {
+      const chips = [];
+      if (state.filters.parentId) {
+        const node = state.nodesById.get(state.filters.parentId);
+        chips.push({ field: 'parentId', label: node ? `階層: ${node.name}` : '階層' });
+      }
+      if (state.filters.assigneeId) {
+        const member = state.memberById.get(state.filters.assigneeId);
+        chips.push({ field: 'assigneeId', label: member ? `担当: ${member.name}` : '担当' });
+      }
+      if (state.filters.priority) {
+        chips.push({ field: 'priority', label: `優先度: ${priorityLabel(state.filters.priority)}` });
+      }
+      if (!chips.length) return '';
+      return `
+        <div class="filter-chips">
+          ${chips.map(chip => `<button class="filter-chip" type="button" data-action="clear-filter" data-filter-field="${h(chip.field)}">${h(chip.label)}${icon('x')}</button>`).join('')}
+          <button class="filter-chip muted" type="button" data-action="clear-filters">すべて解除</button>
+        </div>
       `;
     }
 
@@ -270,10 +317,15 @@
     function renderList() {
       const rows = visibleTreeNodes();
       if (!rows.length) {
+        const filtered = hasActiveFilters();
         return `
           <section class="view">
             <div class="view-toolbar"></div>
-            <div class="empty-list"><div class="empty-list-inner"><button class="button primary" data-action="new-node" data-parent-id="${h(state.rootId)}">${icon('plus')}最初のタスクを追加</button></div></div>
+            <div class="empty-list"><div class="empty-list-inner">
+              ${filtered
+                ? `<button class="button secondary" data-action="clear-filters">${icon('x')}条件に一致するタスクなし</button>`
+                : `<button class="button primary" data-action="create-child-shell" data-parent-id="${h(state.rootId)}">${icon('plus')}最初のタスクを追加</button>`}
+            </div></div>
           </section>
         `;
       }
@@ -295,18 +347,39 @@
                   <th style="width:10%">優先度</th>
                   <th style="width:16%">期間</th>
                   <th style="width:8%">進捗</th>
-                  <th style="width:44px"></th>
                 </tr>
               </thead>
-              <tbody>${rows.map(renderListRow).join('')}</tbody>
+              <tbody>${renderListRowsWithGhosts()}</tbody>
             </table>
           </div>
         </section>
       `;
     }
 
+    function renderListRowsWithGhosts() {
+      const matching = new Set(state.nodes.filter(matchesFilters).map(node => node.id));
+      const includeSet = new Set(matching);
+      matching.forEach(id => ancestorChain(id).forEach(ancestorId => includeSet.add(ancestorId)));
+      const roots = state.nodes.filter(node => !node.parentId).sort(compareNodeForList);
+      let html = '';
+
+      function visit(node) {
+        if (!includeSet.has(node.id)) return;
+        html += renderListRow(node);
+        if (state.collapsed.has(node.id)) return;
+        childrenOf(node.id).sort(compareNodeForList).forEach(visit);
+        if (canCreateChild(node)) {
+          html += renderListGhostRow(node.id, depthOf(node.id) + 1);
+        }
+      }
+
+      roots.forEach(visit);
+      return html;
+    }
+
     function renderListRow(node) {
       const depth = depthOf(node.id);
+      const showAdd = canCreateChild(node);
       return `
         <tr class="${state.shellNodeId === node.id ? 'shell-node-row' : ''}" data-tree-node="${h(node.id)}" draggable="${node.id !== state.rootId}">
           <td>
@@ -315,6 +388,8 @@
               ${node.hasChildren ? `<button class="button ghost icon compact" data-toggle-node="${h(node.id)}">${icon(state.collapsed.has(node.id) ? 'chevron-right' : 'chevron-down')}</button>` : '<span class="button icon compact" aria-hidden="true"></span>'}
               <span class="tree-name ${node.name ? '' : 'placeholder'}" data-open-node="${h(node.id)}">${h(node.name || '新しいタスク')}</span>
               <button class="button ghost icon compact" data-open-node="${h(node.id)}" title="編集">${icon('edit')}</button>
+              ${showAdd ? `<button class="button ghost icon compact row-add-child" data-action="create-child-shell" data-parent-id="${h(node.id)}" title="子タスクを追加">${icon('plus')}</button>` : ''}
+              ${state.savingNodeIds.has(node.id) ? '<span class="saving-dot inline"></span>' : ''}
             </div>
           </td>
           <td>${h(statusName(node.statusColumnId))}</td>
@@ -322,17 +397,31 @@
           <td><span class="chip">${h(priorityLabel(node.priority))}</span></td>
           <td><span class="due-badge ${dueClass(node.endDate)}">${h(formatRange(node.startDate, node.endDate))}</span></td>
           <td class="mono">${Math.round(node.progress)}%</td>
-          <td class="row-action-cell"><button class="button ghost icon compact row-add-child" data-action="create-child-shell" data-parent-id="${h(node.id)}" title="子タスクを追加">${icon('plus')}</button></td>
+        </tr>
+      `;
+    }
+
+    function renderListGhostRow(parentId, depth) {
+      return `
+        <tr class="tree-ghost-row">
+          <td colspan="6">
+            <button class="tree-ghost-button" type="button" data-action="create-child-shell" data-parent-id="${h(parentId)}">
+              <span class="indent" style="--tree-depth:${depth}"></span>
+              ${icon('plus')}
+              <span>タスクを追加</span>
+            </button>
+          </td>
         </tr>
       `;
     }
 
     function renderGantt() {
       const rows = visibleTreeNodes();
+      const displayRows = ganttDisplayRows();
       const scale = ganttScale(rows);
-      const laneHeight = GANTT_CREATE_LANE_HEIGHT;
-      const height = Math.max(rows.length * GANTT_ROW_HEIGHT + laneHeight, 160);
-      const today = Math.floor(Date.now() / 86400000);
+      const emptyLaneCount = Math.max(10, Math.ceil((18 - displayRows.length) / 1));
+      const height = Math.max((displayRows.length + emptyLaneCount) * GANTT_ROW_HEIGHT, 480);
+      const today = localTodayDay();
       const todayLeft = (today - scale.startDay) * scale.dayWidth;
       return `
         <section class="view">
@@ -348,17 +437,18 @@
           <div class="gantt-frame">
             <div class="gantt-left">
               <div class="gantt-axis-left"><span>タスク名</span><span>日付範囲</span><span>日数</span></div>
-              ${renderGanttRootCreateRow()}
-              ${rows.map(renderGanttTreeRow).join('')}
+              <div class="gantt-left-body" style="height:${height}px">
+                ${displayRows.map(renderGanttLeftRow).join('')}
+              </div>
             </div>
             <div class="gantt-right" data-day-width="${scale.dayWidth}" data-start-day="${scale.startDay}">
               <div class="gantt-axis" style="width:${scale.width}px">${renderAxisTicks(scale)}</div>
               <div class="gantt-canvas" style="width:${scale.width}px;height:${height}px;--day-width:${scale.dayWidth}px">
-                <div class="gantt-create-lane" data-gantt-create-parent="${h(state.rootId)}" data-gantt-row-top="0" title="ドラッグしてタスクを追加">${icon('plus')}</div>
-                ${rows.map((node, index) => `<div class="gantt-row create-target" data-gantt-create-parent="${h(node.id)}" data-gantt-row-top="${laneHeight + index * GANTT_ROW_HEIGHT}" style="top:${laneHeight + index * GANTT_ROW_HEIGHT}px"></div>`).join('')}
+                ${renderWeekendBands(scale, height)}
+                ${renderGanttInteractionRows(displayRows, emptyLaneCount)}
                 ${todayLeft >= 0 && todayLeft <= scale.width ? `<div class="today-line" style="left:${todayLeft}px"></div>` : ''}
-                ${renderGanttArrows(rows, scale, height)}
-                ${rows.map((node, index) => renderGanttBar(node, index, scale, laneHeight)).join('')}
+                ${renderGanttArrows(displayRows, scale, height)}
+                ${displayRows.map((item, index) => item.type === 'node' ? renderGanttBar(item.node, index, scale) : '').join('')}
               </div>
             </div>
           </div>
@@ -366,16 +456,34 @@
       `;
     }
 
-    function renderGanttRootCreateRow() {
-      return `
-        <div class="gantt-root-create-row">
-          <button class="button ghost icon compact" data-action="create-child-shell" data-parent-id="${h(state.rootId)}" title="タスクを追加">${icon('plus')}</button>
-          <span class="tree-name placeholder">タスクを追加</span>
-        </div>
-      `;
+    function ganttDisplayRows() {
+      const matching = new Set(state.nodes.filter(matchesFilters).map(node => node.id));
+      const includeSet = new Set(matching);
+      matching.forEach(id => ancestorChain(id).forEach(ancestorId => includeSet.add(ancestorId)));
+      const roots = state.nodes.filter(node => !node.parentId).sort(compareNodeForList);
+      const items = [];
+
+      function visit(node) {
+        if (!includeSet.has(node.id)) return;
+        items.push({ type: 'node', node });
+        if (state.collapsed.has(node.id)) return;
+        childrenOf(node.id).sort(compareNodeForList).forEach(visit);
+        if (canCreateChild(node)) {
+          items.push({ type: 'ghost', parentId: node.id, depth: depthOf(node.id) + 1 });
+        }
+      }
+
+      roots.forEach(visit);
+      return items;
+    }
+
+    function renderGanttLeftRow(item) {
+      if (item.type === 'ghost') return renderGanttGhostRow(item);
+      return renderGanttTreeRow(item.node);
     }
 
     function renderGanttTreeRow(node) {
+      const showAdd = canCreateChild(node);
       return `
         <div class="gantt-tree-row ${state.shellNodeId === node.id ? 'shell-node-row' : ''}" data-tree-node="${h(node.id)}" draggable="${node.id !== state.rootId}">
           <div class="gantt-tree-main">
@@ -383,11 +491,53 @@
             ${node.hasChildren ? `<button class="button ghost icon compact" data-toggle-node="${h(node.id)}">${icon(state.collapsed.has(node.id) ? 'chevron-right' : 'chevron-down')}</button>` : '<span class="button icon compact" aria-hidden="true"></span>'}
             <span class="tree-name ${node.name ? '' : 'placeholder'}" data-open-node="${h(node.id)}">${h(node.name || '新しいタスク')}</span>
             <button class="button ghost icon compact" data-open-node="${h(node.id)}" title="編集">${icon('edit')}</button>
+            ${showAdd ? `<button class="button ghost icon compact row-add-child" data-action="create-child-shell" data-parent-id="${h(node.id)}" title="子タスクを追加">${icon('plus')}</button>` : ''}
+            ${state.savingNodeIds.has(node.id) ? '<span class="saving-dot inline"></span>' : ''}
           </div>
           <div class="gantt-tree-meta">${h(formatShortRange(node.startDate || node.displayStartDate, node.endDate || node.displayEndDate))}</div>
           <div class="gantt-tree-meta">${h(durationLabel(node.startDate || node.displayStartDate, node.endDate || node.displayEndDate))}</div>
         </div>
       `;
+    }
+
+    function renderGanttGhostRow(item) {
+      return `
+        <div class="gantt-tree-row gantt-ghost-row">
+          <button class="gantt-ghost-button" type="button" data-action="create-child-shell" data-parent-id="${h(item.parentId)}">
+            <span class="indent" style="--tree-depth:${item.depth}"></span>
+            ${icon('plus')}
+            <span>タスクを追加</span>
+          </button>
+          <div class="gantt-tree-meta"></div>
+          <div class="gantt-tree-meta"></div>
+        </div>
+      `;
+    }
+
+    function renderGanttInteractionRows(displayRows, emptyLaneCount) {
+      const rowsHtml = displayRows.map((item, index) => {
+        const top = index * GANTT_ROW_HEIGHT;
+        if (item.type === 'ghost') {
+          return `<div class="gantt-row create-target" data-gantt-create-parent="${h(item.parentId)}" data-gantt-row-top="${top}" style="top:${top}px"></div>`;
+        }
+        const node = item.node;
+        if (node.hasChildren && canCreateChild(node)) {
+          return `<div class="gantt-row create-target" data-gantt-create-parent="${h(node.id)}" data-gantt-row-top="${top}" style="top:${top}px"></div>`;
+        }
+        if (node.isLeaf && !node.startDate && !node.endDate) {
+          return `<div class="gantt-row create-target schedule-target" data-gantt-schedule-node="${h(node.id)}" data-gantt-row-top="${top}" style="top:${top}px"></div>`;
+        }
+        return `<div class="gantt-row" style="top:${top}px"></div>`;
+      });
+      for (let i = 0; i < emptyLaneCount; i += 1) {
+        const top = (displayRows.length + i) * GANTT_ROW_HEIGHT;
+        rowsHtml.push(`
+          <div class="gantt-row create-target empty-lane" data-gantt-create-parent="${h(state.rootId)}" data-gantt-row-top="${top}" style="top:${top}px">
+            ${i === 0 ? '<span class="gantt-empty-lane-label">ドラッグしてタスクを追加</span>' : ''}
+          </div>
+        `);
+      }
+      return rowsHtml.join('');
     }
 
     function renderAxisTicks(scale) {
@@ -436,25 +586,43 @@
       return ticks.join('');
     }
 
-    function renderGanttBar(node, index, scale, offsetTop) {
+    function renderWeekendBands(scale, height) {
+      if (state.ganttZoom !== 'day') return '';
+      const bands = [];
+      for (let day = scale.startDay; day <= scale.endDay; day += 1) {
+        const date = new Date(day * 86400000);
+        const dow = date.getUTCDay();
+        if (dow === 0 || dow === 6) {
+          bands.push(`<div class="gantt-weekend-band" style="left:${(day - scale.startDay) * scale.dayWidth}px;width:${scale.dayWidth}px;height:${height}px"></div>`);
+        }
+      }
+      return bands.join('');
+    }
+
+    function renderGanttBar(node, index, scale) {
       const start = node.displayStartDate;
       const end = node.displayEndDate;
       if (!start || !end) return '';
       const left = (dateToDay(start) - scale.startDay) * scale.dayWidth;
       const width = Math.max(24, (dateToDay(end) - dateToDay(start) + 1) * scale.dayWidth);
+      const canDrag = Boolean(node.startDate && node.endDate);
       return `
-        <div class="gantt-bar ${state.shellNodeId === node.id ? 'shell-node-bar' : ''}" data-gantt-bar="${h(node.id)}" style="left:${left}px;top:${offsetTop + index * GANTT_ROW_HEIGHT + 8}px;width:${width}px">
+        <div class="gantt-bar ${state.shellNodeId === node.id ? 'shell-node-bar' : ''} ${canDrag ? '' : 'readonly'}" data-gantt-bar="${h(node.id)}" style="left:${left}px;top:${index * GANTT_ROW_HEIGHT + 8}px;width:${width}px">
+          ${state.savingNodeIds.has(node.id) ? '<span class="saving-dot"></span>' : ''}
           <span class="gantt-progress" style="width:${Math.max(0, Math.min(100, node.progress))}%"></span>
-          <span class="bar-handle left" data-handle="left"></span>
+          ${canDrag ? '<span class="bar-handle left" data-handle="left"></span>' : ''}
           <span class="gantt-label">${h(node.name || '新しいタスク')} ${Math.round(node.progress)}%</span>
-          <span class="bar-handle right" data-handle="right"></span>
+          ${canDrag ? '<span class="bar-handle right" data-handle="right"></span>' : ''}
         </div>
       `;
     }
 
-    function renderGanttArrows(rows, scale, height) {
-      const rowIndex = new Map(rows.map((node, index) => [node.id, index]));
-      const visible = new Set(rows.map(node => node.id));
+    function renderGanttArrows(displayRows, scale, height) {
+      const rowIndex = new Map();
+      displayRows.forEach((item, index) => {
+        if (item.type === 'node') rowIndex.set(item.node.id, index);
+      });
+      const visible = new Set(Array.from(rowIndex.keys()));
       const paths = [];
       state.dependencies.forEach(dep => {
         const fromId = visibleAnchor(dep.predecessorId, visible);
@@ -464,8 +632,8 @@
         if (!from || !to || !from.displayEndDate || !to.displayStartDate || !rowIndex.has(fromId) || !rowIndex.has(toId)) return;
         const x1 = (dateToDay(from.displayEndDate) - scale.startDay + 1) * scale.dayWidth + 2;
         const x2 = (dateToDay(to.displayStartDate) - scale.startDay) * scale.dayWidth - 2;
-        const y1 = GANTT_CREATE_LANE_HEIGHT + rowIndex.get(fromId) * GANTT_ROW_HEIGHT + 20;
-        const y2 = GANTT_CREATE_LANE_HEIGHT + rowIndex.get(toId) * GANTT_ROW_HEIGHT + 20;
+        const y1 = rowIndex.get(fromId) * GANTT_ROW_HEIGHT + 20;
+        const y2 = rowIndex.get(toId) * GANTT_ROW_HEIGHT + 20;
         const mid = Math.max(x1 + 16, (x1 + x2) / 2);
         paths.push(`<path d="M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}" fill="none" stroke="var(--color-text-tertiary)" stroke-width="1.5" marker-end="url(#arrow)"></path>`);
       });

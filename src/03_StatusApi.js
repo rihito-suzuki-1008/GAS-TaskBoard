@@ -5,12 +5,13 @@
 function upsertStatusColumn(payload) {
   payload = payload || {};
   return withLock_(function () {
-    ensureSchema_();
+    requireSchemaExists_();
     requireCurrentMember_();
     const rows = readAll_();
     const columnId = cleanString_(payload.columnId);
     const name = requireName_(payload.name);
     let columns = rows.statusColumns;
+    let requestedDoneColumnId = '';
     if (columnId) {
       const column = columns.find(function (c) { return cleanString_(c.ColumnId) === columnId; });
       if (!column) {
@@ -22,7 +23,7 @@ function upsertStatusColumn(payload) {
       }
       column.Color = normalizeStatusColor_(payload.color, name, payload.isDoneColumn === true || isTrue_(column.IsDoneColumn));
       if (payload.isDoneColumn === true) {
-        columns.forEach(function (c) { c.IsDoneColumn = cleanString_(c.ColumnId) === columnId; });
+        requestedDoneColumnId = columnId;
       }
     } else {
       const newColumnId = cleanString_(payload.clientColumnId);
@@ -30,21 +31,23 @@ function upsertStatusColumn(payload) {
       if (newColumnId && duplicateId) {
         throw new Error('同じIDのステータス列が既に存在します。');
       }
-      if (payload.isDoneColumn === true) {
-        columns.forEach(function (c) { c.IsDoneColumn = false; });
-      }
+      const createdColumnId = newColumnId || newId_();
+      requestedDoneColumnId = payload.isDoneColumn === true ? createdColumnId : '';
       const newColumn = {
-        ColumnId: newColumnId || newId_(),
+        ColumnId: createdColumnId,
         Name: name,
         SortOrder: payload.sortOrder !== undefined && payload.sortOrder !== null && payload.sortOrder !== ''
           ? Number(payload.sortOrder)
           : nextSortOrder_(columns),
-        IsDoneColumn: payload.isDoneColumn === true,
+        IsDoneColumn: false,
         Color: normalizeStatusColor_(payload.color, name, payload.isDoneColumn === true)
       };
       columns.push(newColumn);
       appendObject_(SHEET.STATUS_COLUMNS, newColumn);
       columns = readAll_().statusColumns;
+    }
+    if (requestedDoneColumnId) {
+      columns.forEach(function (c) { c.IsDoneColumn = cleanString_(c.ColumnId) === requestedDoneColumnId; });
     }
     ensureExactlyOneDone_(columns);
     writeObjects_(SHEET.STATUS_COLUMNS, columns.filter(function (c) { return !!c.__row; }));
@@ -55,7 +58,7 @@ function upsertStatusColumn(payload) {
 function deleteStatusColumn(payload) {
   payload = payload || {};
   return withLock_(function () {
-    ensureSchema_();
+    requireSchemaExists_();
     requireCurrentMember_();
     const rows = readAll_();
     const columnId = cleanString_(payload.columnId);

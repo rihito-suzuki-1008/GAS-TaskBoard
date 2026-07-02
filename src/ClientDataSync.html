@@ -115,6 +115,7 @@
       state.commentCounts = data.commentCounts || {};
       state.currentMember = data.currentMember || null;
       state.currentEmail = data.currentEmail || '';
+      state.spreadsheetId = data.spreadsheetId || state.spreadsheetId || '';
       state.rootId = data.rootId || '';
       if (!options.fromCache) {
         state.syncStatus = 'synced';
@@ -129,6 +130,8 @@
         setupRequired: false,
         version: 'local-cache',
         cachedAt: new Date().toISOString(),
+        cacheScope: cacheScopeKey(),
+        spreadsheetId: state.spreadsheetId,
         currentEmail: state.currentEmail,
         currentMember: state.currentMember,
         rootId: state.rootId,
@@ -142,7 +145,11 @@
 
     function persistLocalCache() {
       try {
-        localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(snapshotForCache()));
+        const key = localCacheKey();
+        localStorage.setItem(key, JSON.stringify(snapshotForCache()));
+        const index = readLocalCacheIndex();
+        index[cacheScopeKey()] = key;
+        localStorage.setItem(LOCAL_CACHE_INDEX_KEY, JSON.stringify(index));
       } catch (error) {
         state.syncStatus = 'error';
       }
@@ -150,11 +157,32 @@
 
     function readLocalCache() {
       try {
-        const raw = localStorage.getItem(LOCAL_CACHE_KEY);
-        return raw ? JSON.parse(raw) : null;
+        const key = localCacheKey();
+        const raw = key ? localStorage.getItem(key) : null;
+        const cached = raw ? JSON.parse(raw) : null;
+        return cached && cached.cacheScope === cacheScopeKey() ? cached : null;
       } catch (error) {
         return null;
       }
+    }
+
+    function readLocalCacheIndex() {
+      try {
+        const raw = localStorage.getItem(LOCAL_CACHE_INDEX_KEY);
+        return raw ? JSON.parse(raw) : {};
+      } catch (error) {
+        return {};
+      }
+    }
+
+    function cacheScopeKey() {
+      return `${location.origin}${location.pathname}`;
+    }
+
+    function localCacheKey() {
+      if (state.rootId) return `${LOCAL_CACHE_PREFIX}:${state.rootId}`;
+      const index = readLocalCacheIndex();
+      return index[cacheScopeKey()] || `${LOCAL_CACHE_PREFIX}:scope:${cacheScopeKey()}`;
     }
 
     function startSyncLoop() {
@@ -174,6 +202,7 @@
         render();
         return;
       }
+      const generation = state.mutationGeneration;
       state.syncStatus = 'syncing';
       if (!silent || force) render();
       try {
@@ -182,6 +211,12 @@
           state.setupRequired = true;
           state.currentEmail = data.currentEmail || state.currentEmail || '';
           renderSetup();
+          return;
+        }
+        if (hasPendingMutations() || state.mutationGeneration !== generation || state.ganttCreateDrag) {
+          state.syncStatus = 'pending';
+          if (force) showToast('保存中の変更があるため、同期結果の適用を保留', 'warning');
+          render();
           return;
         }
         applyFullData(data);
@@ -212,7 +247,11 @@
         if (Array.isArray(result.nodes)) mergeNodes(result.nodes);
         rebuildIndexes();
         if (result.code === 'CONFLICT') {
-          showToast(result.message || '他のユーザーが更新しました。', 'warning', { sticky: true, actionLabel: '最新の内容を見る' });
+          showToast(result.message || '他のユーザーが更新しました。', 'warning', {
+            sticky: true,
+            actionLabel: '最新の内容を見る',
+            action: { type: 'openNode', nodeId: result.nodeId || '' }
+          });
         } else {
           showToast(result.message || '保存できませんでした。', 'error');
         }
@@ -264,6 +303,7 @@
       payload = payload || {};
       if (payload.requestId === undefined) payload.requestId = nextRequestId();
       if (optimisticApply) optimisticApply();
+      state.mutationGeneration += 1;
       state.pendingMutationCount += 1;
       state.syncStatus = 'pending';
       rebuildIndexes();

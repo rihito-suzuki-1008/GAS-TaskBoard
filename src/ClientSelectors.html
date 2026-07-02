@@ -88,7 +88,7 @@
 
     function ganttScale(rows) {
       const scheduled = rows.filter(node => node.displayStartDate && node.displayEndDate);
-      const today = Math.floor(Date.now() / 86400000);
+      const today = localTodayDay();
       let startDay = scheduled.length ? Math.min(...scheduled.map(node => dateToDay(node.displayStartDate))) : today - 2;
       let endDay = scheduled.length ? Math.max(...scheduled.map(node => dateToDay(node.displayEndDate))) : today + 21;
       startDay -= state.ganttZoom === 'day' ? 3 : 14;

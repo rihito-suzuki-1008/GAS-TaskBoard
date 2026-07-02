@@ -11,6 +11,7 @@ function makeFullPayload_(rows) {
     ok: true,
     setupRequired: false,
     version: APP_VERSION,
+    spreadsheetId: SpreadsheetApp.getActive().getId(),
     currentEmail: currentEmail,
     currentMember: currentMember ? clientMember_(currentMember) : null,
     rootId: root ? root.NodeId : '',

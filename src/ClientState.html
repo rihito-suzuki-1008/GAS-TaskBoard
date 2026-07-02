@@ -11,6 +11,7 @@
       commentCounts: {},
       currentMember: null,
       currentEmail: '',
+      spreadsheetId: '',
       rootId: '',
       view: 'kanban',
       filters: { query: '', parentId: '', assigneeId: '', priority: '' },
@@ -35,8 +36,10 @@
       dragOverColumnId: '',
       columnDragId: '',
       ganttCreateDrag: null,
+      renderDeferred: false,
       backgroundChains: new Map(),
       pendingMutationCount: 0,
+      mutationGeneration: 0,
       saveChains: new Map(),
       latestRequestByNode: new Map(),
       savingNodeIds: new Set(),
@@ -45,15 +48,16 @@
       toastCounter: 0,
       syncStatus: 'idle',
       lastSyncAt: '',
-      syncTimer: null
+      syncTimer: null,
+      scrollToNodeId: ''
     };
 
     const app = document.getElementById('app');
     const toastRoot = document.getElementById('toastRoot');
-    const LOCAL_CACHE_KEY = 'gasTaskManager.cache.v1';
+    const LOCAL_CACHE_PREFIX = 'gasTaskManager.cache.v2';
+    const LOCAL_CACHE_INDEX_KEY = 'gasTaskManager.cache.index.v2';
     const SYNC_INTERVAL_MS = 30000;
     const GANTT_ROW_HEIGHT = 40;
-    const GANTT_CREATE_LANE_HEIGHT = 40;
     const STATUS_COLOR_PRESETS = ['#98A098', '#2F6FDB', '#1E6F5C', '#B8862B', '#C24444', '#5B7A99', '#7C6EE6', '#D65C9F'];
     const MEMBER_COLOR_PRESETS = ['#1E6F5C', '#2F6FDB', '#B8862B', '#C24444', '#5B7A99', '#7C6EE6', '#D65C9F', '#667066'];
     const ICON_PATHS = {
@@ -79,6 +83,11 @@
     }
 
     window.addEventListener('load', init);
+    window.addEventListener('beforeunload', event => {
+      if (!hasPendingMutations()) return;
+      event.preventDefault();
+      event.returnValue = '';
+    });
     document.addEventListener('keydown', handleGlobalKeydown);
     document.addEventListener('click', event => {
       if (state.openDropdown && !event.target.closest('.dropdown')) {

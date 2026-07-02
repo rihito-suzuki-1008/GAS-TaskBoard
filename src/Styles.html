@@ -334,6 +334,8 @@
     }
 
     .sync-status {
+      border: 0;
+      background: transparent;
       display: inline-flex;
       align-items: center;
       justify-content: flex-end;
@@ -341,6 +343,42 @@
       color: var(--color-text-secondary);
       font-size: var(--text-xs);
       white-space: nowrap;
+      cursor: pointer;
+    }
+
+    .sync-status:hover {
+      color: var(--color-accent);
+    }
+
+    .filter-chips {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: var(--space-2);
+    }
+
+    .filter-chip {
+      min-height: 26px;
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-1);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-pill);
+      background: var(--color-surface);
+      color: var(--color-text-secondary);
+      padding: 0 var(--space-2);
+      font-size: var(--text-xs);
+      cursor: pointer;
+    }
+
+    .filter-chip:hover {
+      color: var(--color-accent);
+      background: var(--color-accent-subtle);
+    }
+
+    .filter-chip.muted {
+      color: var(--color-text-tertiary);
     }
 
     .main {
@@ -849,6 +887,13 @@
       animation: pulse 900ms var(--ease-standard) infinite;
     }
 
+    .saving-dot.inline {
+      position: static;
+      display: inline-block;
+      flex: 0 0 auto;
+      margin-left: var(--space-1);
+    }
+
     @keyframes pulse {
       0%,
       100% {
@@ -948,10 +993,6 @@
       font-weight: var(--weight-regular);
     }
 
-    .row-action-cell {
-      text-align: right;
-    }
-
     .row-add-child {
       opacity: 0;
       transform: translateX(var(--space-1));
@@ -960,9 +1001,34 @@
 
     tr:hover .row-add-child,
     tr:focus-within .row-add-child,
+    .gantt-tree-row:hover .row-add-child,
+    .gantt-tree-row:focus-within .row-add-child,
     tr.shell-node-row .row-add-child {
       opacity: 1;
       transform: translateX(0);
+    }
+
+    .tree-ghost-row td {
+      padding: 0;
+      border-bottom: 1px solid var(--color-border);
+    }
+
+    .tree-ghost-button {
+      width: 100%;
+      min-height: 36px;
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      color: var(--color-text-tertiary);
+      background: transparent;
+      padding: 0 var(--space-3);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .tree-ghost-button:hover {
+      color: var(--color-accent);
+      background: var(--color-canvas);
     }
 
     .mono {
@@ -1002,6 +1068,10 @@
       overflow: hidden;
       border-right: 1px solid var(--color-border);
       background: var(--color-surface);
+    }
+
+    .gantt-left-body {
+      will-change: transform;
     }
 
     .gantt-right {
@@ -1093,21 +1163,6 @@
       animation: shellRowGrow var(--duration-drawer) var(--ease-standard);
     }
 
-    .gantt-root-create-row {
-      height: var(--gantt-row-height);
-      display: flex;
-      align-items: center;
-      gap: var(--space-2);
-      padding: 0 var(--space-3);
-      border-bottom: 1px dashed var(--color-border-strong);
-      color: var(--color-text-tertiary);
-      background: var(--color-canvas);
-    }
-
-    .gantt-root-create-row .button {
-      color: var(--color-text-tertiary);
-    }
-
     .gantt-tree-main {
       min-width: 0;
       display: flex;
@@ -1127,6 +1182,29 @@
       font-size: var(--text-xs);
     }
 
+    .gantt-ghost-row {
+      color: var(--color-text-tertiary);
+      background: var(--color-surface);
+    }
+
+    .gantt-ghost-button {
+      height: 100%;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      color: var(--color-text-tertiary);
+      background: transparent;
+      padding: 0 var(--space-3);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .gantt-ghost-button:hover {
+      color: var(--color-accent);
+      background: var(--color-canvas);
+    }
+
     .gantt-canvas {
       position: relative;
       min-height: 160px;
@@ -1138,6 +1216,7 @@
       right: 0;
       background-image: linear-gradient(to right, var(--color-border) 1px, transparent 1px);
       background-size: var(--day-width) 100%;
+      z-index: 1;
     }
 
     .gantt-row.create-target {
@@ -1148,23 +1227,30 @@
       background-color: var(--color-accent-subtle);
     }
 
-    .gantt-create-lane {
-      position: absolute;
-      left: 0;
-      right: 0;
-      height: var(--gantt-row-height);
-      display: grid;
-      place-items: center;
-      border-bottom: 1px dashed var(--color-border-strong);
-      color: var(--color-text-tertiary);
-      background: var(--color-canvas);
+    .gantt-row.schedule-target {
       cursor: crosshair;
-      z-index: 2;
     }
 
-    .gantt-create-lane:hover {
-      background: var(--color-accent-subtle);
-      color: var(--color-accent);
+    .gantt-row.empty-lane {
+      color: var(--color-text-tertiary);
+      border-bottom-style: dashed;
+    }
+
+    .gantt-empty-lane-label {
+      position: absolute;
+      left: var(--space-3);
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: var(--text-xs);
+      pointer-events: none;
+    }
+
+    .gantt-weekend-band {
+      position: absolute;
+      top: 0;
+      background: var(--color-canvas);
+      pointer-events: none;
+      z-index: 0;
     }
 
     .gantt-create-preview {
@@ -1175,6 +1261,30 @@
       background: var(--color-accent-subtle);
       pointer-events: none;
       z-index: 3;
+    }
+
+    .gantt-drag-chip {
+      position: absolute;
+      left: 0;
+      bottom: calc(100% + var(--space-1));
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-pill);
+      background: var(--color-surface);
+      color: var(--color-text-secondary);
+      box-shadow: var(--shadow-sm);
+      padding: 0 var(--space-2);
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    .gantt-drag-chip.floating {
+      bottom: auto;
+      z-index: 7;
     }
 
     .today-line {
@@ -1197,6 +1307,10 @@
       overflow: hidden;
       cursor: grab;
       z-index: 5;
+    }
+
+    .gantt-bar.readonly {
+      cursor: default;
     }
 
     .gantt-bar.shell-node-bar {

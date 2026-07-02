@@ -350,6 +350,10 @@
       if (state.creatingShell) return;
       const parent = state.nodesById.get(parentId);
       if (!parent) return;
+      if (!canCreateChild(parent)) {
+        showToast('依存関係があるタスクには子タスクを追加できません', 'warning');
+        return;
+      }
       state.creatingShell = true;
       const nodeId = newClientId('node');
       const node = makeLocalNode({
@@ -362,7 +366,7 @@
         startDate: options.startDate || '',
         endDate: options.endDate || ''
       });
-      queueNodeMutation(nodeId, 'addNode', () => ({
+      return queueNodeMutation(nodeId, 'addNode', () => ({
         nodeId,
         parentId,
         name: '',
@@ -381,11 +385,13 @@
         state.shellNodeId = nodeId;
         state.shellBaseline = detailSnapshotFromNode(node);
         state.focusDetailName = true;
+        state.scrollToNodeId = nodeId;
       }, {
         rollback: () => {
           state.nodes = state.nodes.filter(item => item.id !== nodeId);
           if (state.drawerNodeId === nodeId) closeDrawer({ skipShellCleanup: true });
           clearShellTracking();
+          state.creatingShell = false;
         }
       });
     }
@@ -511,6 +517,7 @@
     function initializeDetailDraft(node) {
       state.detailDraftNodeId = node.id;
       state.detailDraft = {
+        baseUpdatedAt: node.updatedAt || '',
         name: node.name,
         statusColumnId: node.statusColumnId,
         priority: node.priority,
@@ -537,7 +544,7 @@
       if (state.detailDraftNodeId !== node.id) initializeDetailDraft(node);
     }
 
-    function saveDetail() {
+    function saveDetail(options = {}) {
       const node = state.nodesById.get(state.drawerNodeId);
       const draft = state.detailDraft;
       if (!node || !draft) return;
@@ -556,10 +563,12 @@
         endDate: draft.endDate,
         description: draft.description
       };
-      if (state.shellNodeId === node.id) {
+      const wasShell = state.shellNodeId === node.id;
+      const parentId = node.parentId || state.rootId;
+      if (wasShell) {
         clearShellTracking();
       }
-      saveNodePatch(node.id, patch, () => {
+      return saveNodePatch(node.id, patch, () => {
         Object.assign(node, {
           name: patch.name,
           statusColumnId: patch.statusColumnId,
@@ -569,6 +578,19 @@
           endDate: patch.endDate,
           description: patch.description
         });
+      }, {
+        baseUpdatedAt: wasShell ? undefined : draft.baseUpdatedAt,
+        skipBaseUpdatedAt: wasShell,
+        onSuccess: result => {
+          if (result && result.ok === false) return;
+          if (options.createNext) {
+            createChildShell(parentId);
+            return;
+          }
+          if (options.closeAfter && state.drawerNodeId === node.id) {
+            closeDrawer({ skipShellCleanup: true });
+          }
+        }
       });
     }
 
@@ -666,12 +688,16 @@
       });
     }
 
-    function saveNodePatch(nodeId, patch, optimisticApply) {
-      queueNodeMutation(nodeId, 'saveNode', () => ({
-        nodeId,
-        baseUpdatedAt: currentUpdatedAt(nodeId),
-        patch
-      }), optimisticApply);
+    function saveNodePatch(nodeId, patch, optimisticApply, options = {}) {
+      return queueNodeMutation(nodeId, 'saveNode', () => {
+        const payload = { nodeId, patch };
+        if (!options.skipBaseUpdatedAt) {
+          payload.baseUpdatedAt = Object.prototype.hasOwnProperty.call(options, 'baseUpdatedAt')
+            ? options.baseUpdatedAt
+            : currentUpdatedAt(nodeId);
+        }
+        return payload;
+      }, optimisticApply, options);
     }
 
     function queueNodeMutation(nodeId, apiName, payloadFactory, optimisticApply, options = {}) {
@@ -685,6 +711,7 @@
         state.syncStatus = 'pending';
         persistLocalCache();
       }
+      state.mutationGeneration += 1;
       state.savingNodeIds.add(nodeId);
       rebuildIndexes();
       render();
@@ -698,6 +725,7 @@
         if (result.requestId && state.latestRequestByNode.get(nodeId) !== result.requestId) return;
         applyMutationResult(result);
         if (options.onSuccess) options.onSuccess(result);
+        return result;
       }).catch(error => {
         if (options.rollback) {
           options.rollback(before, error);
@@ -795,15 +823,12 @@
     function moveNodeTo(nodeId, newParentId) {
       const node = state.nodesById.get(nodeId);
       if (!node || node.id === state.rootId || node.parentId === newParentId) return;
-      const oldParentId = node.parentId;
       queueNodeMutation(nodeId, 'moveNode', () => ({
         nodeId,
         newParentId,
         baseUpdatedAt: currentUpdatedAt(nodeId)
       }), () => {
         node.parentId = newParentId;
-      }).catch(() => {
-        node.parentId = oldParentId;
       });
     }
 
@@ -811,10 +836,13 @@
       if (!state.currentMember || state.creatingShell) return;
       if (event.target.closest('.gantt-bar')) return;
       const row = event.currentTarget;
-      const parentId = row.dataset.ganttCreateParent;
+      const parentId = row.dataset.ganttCreateParent || '';
+      const scheduleNodeId = row.dataset.ganttScheduleNode || '';
       const right = row.closest('.gantt-right');
       const canvas = row.closest('.gantt-canvas');
-      if (!parentId || !right || !canvas) return;
+      if ((!parentId && !scheduleNodeId) || !right || !canvas) return;
+      const scheduleNode = scheduleNodeId ? state.nodesById.get(scheduleNodeId) : null;
+      if (scheduleNodeId && (!scheduleNode || !scheduleNode.isLeaf || scheduleNode.startDate || scheduleNode.endDate)) return;
       const dayWidth = Number(right.dataset.dayWidth);
       const scaleStart = Number(right.dataset.startDay);
       const rowTop = Number(row.dataset.ganttRowTop) || 0;
@@ -822,60 +850,127 @@
       const initialX = event.clientX;
       let moved = false;
       let preview = null;
+      let latestRange = null;
+      let cancelled = false;
       event.preventDefault();
       row.setPointerCapture(event.pointerId);
+      state.ganttCreateDrag = { type: scheduleNodeId ? 'schedule' : 'create', nodeId: scheduleNodeId, parentId };
+
+      const rangeFromClientX = clientX => {
+        const maxX = Math.max(0, canvas.scrollWidth - 1);
+        const rawStart = Math.max(0, Math.min(initialX - canvasRect.left + right.scrollLeft, maxX));
+        const rawEnd = Math.max(0, Math.min(clientX - canvasRect.left + right.scrollLeft, maxX));
+        const startOffset = Math.floor(Math.min(rawStart, rawEnd) / dayWidth);
+        const endOffset = Math.floor(Math.max(rawStart, rawEnd) / dayWidth);
+        const startDay = scaleStart + startOffset;
+        const endDay = scaleStart + Math.max(startOffset, endOffset);
+        return {
+          left: startOffset * dayWidth,
+          width: Math.max(dayWidth, (endDay - startDay + 1) * dayWidth),
+          startDate: dayToDate(startDay),
+          endDate: dayToDate(endDay)
+        };
+      };
 
       const updatePreview = moveEvent => {
-        const x1 = Math.max(0, Math.min(initialX - canvasRect.left + right.scrollLeft, canvas.scrollWidth));
-        const x2 = Math.max(0, Math.min(moveEvent.clientX - canvasRect.left + right.scrollLeft, canvas.scrollWidth));
-        const left = Math.min(x1, x2);
-        const width = Math.max(dayWidth, Math.abs(x2 - x1));
         moved = moved || Math.abs(moveEvent.clientX - initialX) >= 4;
+        latestRange = rangeFromClientX(moveEvent.clientX);
         if (!preview) {
           preview = document.createElement('div');
           preview.className = 'gantt-create-preview';
           preview.style.top = `${rowTop + 8}px`;
           canvas.appendChild(preview);
         }
-        preview.style.left = `${left}px`;
-        preview.style.width = `${width}px`;
+        preview.style.left = `${latestRange.left}px`;
+        preview.style.width = `${latestRange.width}px`;
+        preview.innerHTML = `<span class="gantt-drag-chip">${h(formatShortRange(latestRange.startDate, latestRange.endDate))} · ${h(durationLabel(latestRange.startDate, latestRange.endDate))}</span>`;
       };
 
-      const onMove = moveEvent => updatePreview(moveEvent);
-      const onUp = upEvent => {
+      const cleanup = () => {
         document.removeEventListener('pointermove', onMove);
         document.removeEventListener('pointerup', onUp);
+        document.removeEventListener('keydown', onKeyDown);
         if (preview) preview.remove();
-        if (!moved) return;
-        const x1 = Math.max(0, initialX - canvasRect.left + right.scrollLeft);
-        const x2 = Math.max(0, upEvent.clientX - canvasRect.left + right.scrollLeft);
-        const startOffset = Math.floor(Math.min(x1, x2) / dayWidth);
-        const endOffset = Math.floor(Math.max(x1, x2) / dayWidth);
+        state.ganttCreateDrag = null;
+        finishDeferredRender();
+      };
+      const onMove = moveEvent => updatePreview(moveEvent);
+      const onUp = () => {
+        const range = moved ? latestRange : rangeFromClientX(initialX);
+        cleanup();
+        if (cancelled || !range) return;
+        if (scheduleNodeId) {
+          const node = state.nodesById.get(scheduleNodeId);
+          if (!node) return;
+          saveNodePatch(scheduleNodeId, { startDate: range.startDate, endDate: range.endDate }, () => {
+            node.startDate = range.startDate;
+            node.endDate = range.endDate;
+            node.displayStartDate = range.startDate;
+            node.displayEndDate = range.endDate;
+            state.scrollToNodeId = scheduleNodeId;
+          }, { baseUpdatedAt: scheduleNode.updatedAt || '' });
+          return;
+        }
         createChildShell(parentId, {
-          startDate: dayToDate(scaleStart + startOffset),
-          endDate: dayToDate(scaleStart + Math.max(startOffset, endOffset))
+          startDate: range.startDate,
+          endDate: range.endDate
         });
+      };
+      const onKeyDown = keyEvent => {
+        if (keyEvent.key !== 'Escape') return;
+        cancelled = true;
+        cleanup();
       };
 
       document.addEventListener('pointermove', onMove);
       document.addEventListener('pointerup', onUp);
+      document.addEventListener('keydown', onKeyDown);
     }
 
     function startGanttDrag(event) {
       const bar = event.currentTarget;
       const node = state.nodesById.get(bar.dataset.ganttBar);
       if (!node || !state.currentMember) return;
+      if (!node.startDate || !node.endDate) return;
       const right = bar.closest('.gantt-right');
+      const canvas = bar.closest('.gantt-canvas');
       const dayWidth = Number(right.dataset.dayWidth);
       const mode = event.target.dataset.handle || 'move';
       const initialX = event.clientX;
-      const initialStart = dateToDay(node.startDate || node.displayStartDate);
-      const initialEnd = dateToDay(node.endDate || node.displayEndDate);
+      const initialStart = dateToDay(node.startDate);
+      const initialEnd = dateToDay(node.endDate);
       if (!initialStart || !initialEnd) return;
+      const baseUpdatedAt = node.updatedAt || '';
       let nextStart = initialStart;
       let nextEnd = initialEnd;
+      let chip = null;
+      let cancelled = false;
       event.preventDefault();
       bar.setPointerCapture(event.pointerId);
+      state.ganttCreateDrag = { type: 'bar', nodeId: node.id };
+
+      const updateChip = () => {
+        if (!canvas) return;
+        if (!chip) {
+          chip = document.createElement('div');
+          chip.className = 'gantt-drag-chip floating';
+          canvas.appendChild(chip);
+        }
+        const scaleStart = Number(right.dataset.startDay);
+        chip.textContent = `${formatShortRange(dayToDate(nextStart), dayToDate(nextEnd))} · ${durationLabel(dayToDate(nextStart), dayToDate(nextEnd))}`;
+        chip.style.left = `${(nextStart - scaleStart) * dayWidth}px`;
+        chip.style.top = `${Math.max(0, Number.parseFloat(bar.style.top || '0') - 26)}px`;
+      };
+
+      const cleanup = () => {
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+        document.removeEventListener('keydown', onKeyDown);
+        if (chip) chip.remove();
+        state.ganttCreateDrag = null;
+        finishDeferredRender();
+      };
+
       const onMove = moveEvent => {
         const delta = Math.round((moveEvent.clientX - initialX) / dayWidth);
         if (mode === 'left') {
@@ -891,10 +986,11 @@
         const scaleStart = Number(right.dataset.startDay);
         bar.style.left = `${(nextStart - scaleStart) * dayWidth}px`;
         bar.style.width = `${Math.max(24, (nextEnd - nextStart + 1) * dayWidth)}px`;
+        updateChip();
       };
       const onUp = () => {
-        document.removeEventListener('pointermove', onMove);
-        document.removeEventListener('pointerup', onUp);
+        cleanup();
+        if (cancelled) return;
         const startDate = dayToDate(nextStart);
         const endDate = dayToDate(nextEnd);
         if (startDate !== node.startDate || endDate !== node.endDate) {
@@ -903,9 +999,16 @@
             node.endDate = endDate;
             node.displayStartDate = startDate;
             node.displayEndDate = endDate;
-          });
+          }, { baseUpdatedAt });
         }
+      };
+      const onKeyDown = keyEvent => {
+        if (keyEvent.key !== 'Escape') return;
+        cancelled = true;
+        cleanup();
+        render();
       };
       document.addEventListener('pointermove', onMove);
       document.addEventListener('pointerup', onUp);
+      document.addEventListener('keydown', onKeyDown);
     }
