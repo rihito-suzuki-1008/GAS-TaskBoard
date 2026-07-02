@@ -14,7 +14,10 @@ function doGet() {
 }
 
 function include(filename) {
-  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+  // Client*.html and Styles.html are fragments injected into <script>/<style>.
+  // Reading them as standalone HtmlOutput makes GAS validate JS template
+  // literals such as `<aside ...>` as real HTML and reject otherwise valid code.
+  return HtmlService.createTemplateFromFile(filename).getRawContent();
 }
 
 function loadAll() {

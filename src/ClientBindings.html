@@ -32,13 +32,20 @@
         bindOnce(button, 'click', event => {
           event.stopPropagation();
           const id = button.dataset.dropdownTrigger;
-          state.openDropdown = state.openDropdown === id ? '' : id;
+          if (state.openDropdown === id) {
+            state.openDropdown = '';
+            state.calendarView = null;
+          } else {
+            state.openDropdown = id;
+            if (button.closest('.date-picker')) ensureCalendarView(id);
+          }
           render();
         });
         bindOnce(button, 'keydown', event => {
           if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
             state.openDropdown = button.dataset.dropdownTrigger;
+            if (button.closest('.date-picker')) ensureCalendarView(button.dataset.dropdownTrigger);
             render();
             focusFirstDropdownOption();
           }
@@ -58,6 +65,24 @@
           render();
         });
         bindOnce(option, 'keydown', handleDropdownOptionKeydown);
+      });
+      container.querySelectorAll('[data-calendar-hover-day]').forEach(dayButton => {
+        bindOnce(dayButton, 'mouseenter', () => {
+          const id = dayButton.dataset.calendarId;
+          const view = ensureCalendarView(id);
+          if (dayButton.dataset.calendarScope !== 'filters' || view.mode !== 'range' || !view.rangeAnchor) return;
+          const nextHoverDay = Number(dayButton.dataset.calendarHoverDay) || 0;
+          if (view.hoverDay === nextHoverDay) return;
+          view.hoverDay = nextHoverDay;
+          render();
+        });
+      });
+      container.querySelectorAll('.calendar-grid').forEach(grid => {
+        bindOnce(grid, 'mouseleave', () => {
+          if (!state.calendarView || !state.calendarView.rangeAnchor || !state.calendarView.hoverDay) return;
+          state.calendarView.hoverDay = 0;
+          render();
+        });
       });
     }
 
@@ -169,6 +194,7 @@
     }
 
     function bindTreeRows() {
+      bindCreatePreviewTriggers();
       document.querySelectorAll('[data-toggle-node]').forEach(button => {
         button.addEventListener('click', event => {
           event.stopPropagation();
@@ -204,6 +230,16 @@
       });
     }
 
+    function bindCreatePreviewTriggers() {
+      document.querySelectorAll('.row-add-child[data-parent-id]').forEach(button => {
+        button.addEventListener('mouseenter', () => queueCreatePreview(button.dataset.parentId));
+        button.addEventListener('focus', () => queueCreatePreview(button.dataset.parentId));
+        button.addEventListener('mouseleave', removeCreatePreview);
+        button.addEventListener('blur', removeCreatePreview);
+        button.addEventListener('click', removeCreatePreview);
+      });
+    }
+
     function bindGantt() {
       bindTreeRows();
       document.querySelectorAll('[data-zoom]').forEach(button => {
@@ -212,17 +248,19 @@
           render();
         });
       });
-      const scaleInput = document.querySelector('[data-gantt-scale]');
-      if (scaleInput) {
-        scaleInput.addEventListener('input', event => {
-          state.ganttScaleFactor = Number(event.target.value) || 1;
+      document.querySelectorAll('[data-gantt-scale-level]').forEach(button => {
+        button.addEventListener('click', () => {
+          state.ganttScaleFactor = nearestGanttScaleFactor(button.dataset.ganttScaleLevel);
           render();
         });
-      }
+      });
       const right = document.querySelector('.gantt-right');
       const leftBody = document.querySelector('.gantt-left-body');
       if (right && leftBody) {
         right.addEventListener('scroll', () => {
+          state.ganttScrollLeft = right.scrollLeft;
+          state.ganttScrollTop = right.scrollTop;
+          state.ganttScrollInitialized = true;
           leftBody.style.transform = `translateY(${-right.scrollTop}px)`;
         });
       }
@@ -240,19 +278,30 @@
 
     function handleActionClick(event) {
       const action = event.currentTarget.dataset.action;
+      if (action && action.startsWith('calendar-')) event.stopPropagation();
       if (action === 'reload' || action === 'force-sync') return syncFromServer({ force: true });
-      if (action === 'create-child-shell') return createChildShell(event.currentTarget.dataset.parentId);
+      if (action === 'create-child-shell') {
+        removeCreatePreview();
+        return createChildShell(event.currentTarget.dataset.parentId);
+      }
       if (action === 'clear-filter') {
         const field = event.currentTarget.dataset.filterField;
-        if (field && Object.prototype.hasOwnProperty.call(state.filters, field)) state.filters[field] = '';
+        clearFilterField(field);
         render();
         return;
       }
       if (action === 'clear-filters') {
-        state.filters = { query: '', parentId: '', assigneeId: '', priority: '' };
+        resetFilters();
         render();
         return;
       }
+      if (action === 'calendar-prev-month') return shiftCalendar(event.currentTarget.dataset.calendarId, -1);
+      if (action === 'calendar-next-month') return shiftCalendar(event.currentTarget.dataset.calendarId, 1);
+      if (action === 'calendar-mode') return setCalendarMode(event.currentTarget.dataset.calendarId, event.currentTarget.dataset.calendarMode);
+      if (action === 'calendar-select-day') return selectCalendarDay(event.currentTarget);
+      if (action === 'calendar-today') return selectCalendarToday(event.currentTarget);
+      if (action === 'calendar-clear') return clearCalendarSelection(event.currentTarget);
+      if (action === 'gantt-jump-today') return jumpGanttToToday();
       if (action === 'filter-member') {
         state.filters.assigneeId = event.currentTarget.dataset.memberId || '';
         render();
@@ -288,6 +337,168 @@
       if (action === 'clear-member-draft') return clearMemberDraft();
       if (action === 'confirm-member-delete') return confirmMemberDelete(event.currentTarget.dataset.memberId);
       if (action === 'delete-member') return deleteMemberConfirmed();
+    }
+
+    function resetFilters() {
+      state.filters = { query: '', parentId: '', assigneeId: '', priority: '', dateStart: '', dateEnd: '' };
+      state.calendarView = null;
+      state.openDropdown = '';
+    }
+
+    function clearFilterField(field) {
+      if (field === 'date') {
+        state.filters.dateStart = '';
+        state.filters.dateEnd = '';
+        state.calendarView = null;
+        return;
+      }
+      if (field && Object.prototype.hasOwnProperty.call(state.filters, field)) state.filters[field] = '';
+    }
+
+    function ensureCalendarView(id) {
+      if (state.calendarView && state.calendarView.id === id) return state.calendarView;
+      const [scope] = String(id || '').split(':');
+      const mode = scope === 'filters' && state.filters.dateStart && state.filters.dateEnd && state.filters.dateStart !== state.filters.dateEnd
+        ? 'range'
+        : 'single';
+      state.calendarView = {
+        id,
+        monthDay: calendarDefaultMonthDay(id),
+        mode,
+        rangeAnchor: '',
+        hoverDay: 0
+      };
+      return state.calendarView;
+    }
+
+    function calendarDefaultMonthDay(id) {
+      const [scope, field] = String(id || '').split(':');
+      if (scope === 'filters') return monthStartDay(dateToDay(state.filters.dateStart || dayToDate(localTodayDay())));
+      const target = draftForScope(scope);
+      const selected = target ? target[field] : '';
+      const related = target ? (field === 'endDate' ? target.startDate : target.endDate) : '';
+      return monthStartDay(dateToDay(selected || related || dayToDate(localTodayDay())));
+    }
+
+    function shiftCalendar(id, deltaMonths) {
+      const view = ensureCalendarView(id);
+      view.monthDay = shiftMonthDay(view.monthDay, deltaMonths);
+      render();
+    }
+
+    function setCalendarMode(id, mode) {
+      const view = ensureCalendarView(id);
+      view.mode = mode === 'range' ? 'range' : 'single';
+      if (view.mode === 'range' && state.filters.dateStart && state.filters.dateStart === state.filters.dateEnd) {
+        const anchorDay = dateToDay(state.filters.dateStart);
+        view.rangeAnchor = anchorDay;
+        view.hoverDay = anchorDay;
+      } else {
+        view.rangeAnchor = '';
+        view.hoverDay = 0;
+      }
+      render();
+    }
+
+    function selectCalendarDay(button) {
+      const id = button.dataset.calendarId;
+      const day = button.dataset.calendarDay;
+      if (!day) return;
+      if (button.dataset.calendarScope === 'filters') {
+        selectFilterDate(id, day, button.dataset.calendarMode);
+        return;
+      }
+      setDraftDate(button.dataset.calendarScope, button.dataset.calendarField, day);
+      closeCalendar();
+      render();
+    }
+
+    function selectFilterDate(id, dateText, mode) {
+      const day = dateToDay(dateText);
+      const view = ensureCalendarView(id);
+      view.monthDay = monthStartDay(day);
+      if (mode !== 'range') {
+        state.filters.dateStart = dateText;
+        state.filters.dateEnd = dateText;
+        closeCalendar();
+        render();
+        return;
+      }
+      if (!view.rangeAnchor && state.filters.dateStart && state.filters.dateStart === state.filters.dateEnd && state.filters.dateStart !== dateText) {
+        view.rangeAnchor = dateToDay(state.filters.dateStart);
+      }
+      if (!view.rangeAnchor) {
+        view.mode = 'range';
+        view.rangeAnchor = day;
+        view.hoverDay = day;
+        render();
+        return;
+      }
+      const startDay = Math.min(view.rangeAnchor, day);
+      const endDay = Math.max(view.rangeAnchor, day);
+      state.filters.dateStart = dayToDate(startDay);
+      state.filters.dateEnd = dayToDate(endDay);
+      closeCalendar();
+      render();
+    }
+
+    function selectCalendarToday(button) {
+      const today = dayToDate(localTodayDay());
+      if (button.dataset.calendarScope === 'filters') {
+        state.filters.dateStart = today;
+        state.filters.dateEnd = today;
+      } else {
+        setDraftDate(button.dataset.calendarScope, button.dataset.calendarField, today);
+      }
+      closeCalendar();
+      render();
+    }
+
+    function clearCalendarSelection(button) {
+      if (button.dataset.calendarScope === 'filters') {
+        state.filters.dateStart = '';
+        state.filters.dateEnd = '';
+      } else {
+        const target = draftForScope(button.dataset.calendarScope);
+        if (target) {
+          target.startDate = '';
+          target.endDate = '';
+        }
+      }
+      closeCalendar();
+      render();
+    }
+
+    function setDraftDate(scope, field, dateText) {
+      const target = draftForScope(scope);
+      if (!target) return;
+      if (field === 'startDate') {
+        target.startDate = dateText;
+        if (!target.endDate || target.endDate < dateText) target.endDate = dateText;
+        return;
+      }
+      if (field === 'endDate') {
+        if (target.startDate && dateText < target.startDate) return;
+        if (!target.startDate) target.startDate = dateText;
+        target.endDate = dateText;
+      }
+    }
+
+    function closeCalendar() {
+      state.openDropdown = '';
+      state.calendarView = null;
+    }
+
+    function jumpGanttToToday() {
+      const right = document.querySelector('.gantt-right');
+      const leftBody = document.querySelector('.gantt-left-body');
+      if (!right) return;
+      const left = ganttTodayScrollLeft(right);
+      right.scrollTo({ left, top: right.scrollTop, behavior: 'smooth' });
+      state.ganttScrollLeft = left;
+      state.ganttScrollTop = right.scrollTop;
+      state.ganttScrollInitialized = true;
+      if (leftBody) leftBody.style.transform = `translateY(${-right.scrollTop}px)`;
     }
 
     function handleDraftInput(event) {
@@ -340,6 +551,7 @@
       if (state.ganttCreateDrag) return;
       if (state.openDropdown) {
         state.openDropdown = '';
+        state.calendarView = null;
         render();
         return;
       }
@@ -363,6 +575,7 @@
       }
       if (event.key === 'Escape') {
         state.openDropdown = '';
+        state.calendarView = null;
         render();
       }
     }
@@ -370,6 +583,11 @@
     function focusFirstDropdownOption() {
       requestAnimationFrame(() => {
         const option = document.querySelector('[data-dropdown-option]');
-        if (option) option.focus();
+        if (option) {
+          option.focus();
+          return;
+        }
+        const day = document.querySelector('.calendar-day:not(:disabled)');
+        if (day) day.focus();
       });
     }

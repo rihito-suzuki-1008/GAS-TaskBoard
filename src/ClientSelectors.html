@@ -12,6 +12,10 @@
       if (state.filters.parentId && node.id !== state.filters.parentId && !isDescendantOf(node.id, state.filters.parentId)) return false;
       if (state.filters.assigneeId && !node.assigneeIds.includes(state.filters.assigneeId)) return false;
       if (state.filters.priority && node.priority !== state.filters.priority) return false;
+      if (state.filters.dateStart && state.filters.dateEnd) {
+        if (!node.startDate || !node.endDate) return false;
+        if (node.endDate < state.filters.dateStart || node.startDate > state.filters.dateEnd) return false;
+      }
       return true;
     }
 
@@ -20,6 +24,10 @@
       const matching = new Set(state.nodes.filter(matchesFilters).map(node => node.id));
       const includeSet = new Set(matching);
       matching.forEach(id => ancestorChain(id).forEach(ancestorId => includeSet.add(ancestorId)));
+      if (state.shellNodeId && state.nodesById.has(state.shellNodeId)) {
+        includeSet.add(state.shellNodeId);
+        ancestorChain(state.shellNodeId).forEach(ancestorId => includeSet.add(ancestorId));
+      }
       const rows = [];
       function visit(node) {
         if (!includeSet.has(node.id)) return;
@@ -74,6 +82,23 @@
       return ancestorChain(nodeId).length;
     }
 
+    function lastVisibleDescendantId(parentId) {
+      const visibleIds = new Set(visibleTreeNodes().map(node => node.id));
+      let lastId = parentId;
+
+      function visit(nodeId) {
+        if (state.collapsed.has(nodeId)) return;
+        childrenOf(nodeId).sort(compareNodeForList).forEach(child => {
+          if (!visibleIds.has(child.id)) return;
+          lastId = child.id;
+          visit(child.id);
+        });
+      }
+
+      visit(parentId);
+      return lastId;
+    }
+
     function toggleCollapsed(nodeId) {
       if (state.collapsed.has(nodeId)) state.collapsed.delete(nodeId);
       else state.collapsed.add(nodeId);
@@ -89,12 +114,21 @@
     function ganttScale(rows) {
       const scheduled = rows.filter(node => node.displayStartDate && node.displayEndDate);
       const today = localTodayDay();
-      let startDay = scheduled.length ? Math.min(...scheduled.map(node => dateToDay(node.displayStartDate))) : today - 2;
-      let endDay = scheduled.length ? Math.max(...scheduled.map(node => dateToDay(node.displayEndDate))) : today + 21;
-      startDay -= state.ganttZoom === 'day' ? 3 : 14;
-      endDay += state.ganttZoom === 'day' ? 7 : 31;
+      const scaleDays = scheduled.flatMap(node => [dateToDay(node.displayStartDate), dateToDay(node.displayEndDate)]).concat(today);
+      const filterRange = dateFilterRange();
+      if (filterRange) scaleDays.push(filterRange.start, filterRange.end);
+      let startDay = Math.min(...scaleDays);
+      let endDay = Math.max(...scaleDays);
+      const padding = state.ganttZoom === 'day'
+        ? { past: 30, future: 120 }
+        : state.ganttZoom === 'week'
+          ? { past: 60, future: 240 }
+          : { past: 90, future: 365 };
+      startDay -= padding.past;
+      endDay += padding.future;
       const baseDayWidth = state.ganttZoom === 'day' ? 18 : state.ganttZoom === 'week' ? 10 : 4;
-      const dayWidth = Math.max(3, Math.round(baseDayWidth * (Number(state.ganttScaleFactor) || 1)));
+      const scaleFactor = nearestGanttScaleFactor(state.ganttScaleFactor);
+      const dayWidth = Math.max(3, Math.round(baseDayWidth * scaleFactor));
       return { startDay, endDay, dayWidth, width: Math.max(900, (endDay - startDay + 1) * dayWidth) };
     }
 

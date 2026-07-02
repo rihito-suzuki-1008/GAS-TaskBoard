@@ -4,11 +4,13 @@
         state.renderDeferred = true;
         return;
       }
+      removeCreatePreview();
       if (state.setupRequired) {
         renderSetup();
         return;
       }
       const root = state.nodesById.get(state.rootId);
+      const ganttScroll = captureGanttScroll();
       app.className = 'shell';
       app.innerHTML = `
         <header class="topbar">
@@ -32,6 +34,7 @@
       if (state.view === 'kanban') bindKanban();
       if (state.view === 'list') bindTreeRows();
       if (state.view === 'gantt') bindGantt();
+      restoreGanttScroll(ganttScroll);
       renderDrawerRoot();
       renderDialogRoot();
       renderToasts();
@@ -42,6 +45,39 @@
       if (!state.renderDeferred) return;
       state.renderDeferred = false;
       render();
+    }
+
+    function captureGanttScroll() {
+      if (state.view !== 'gantt') return null;
+      const right = document.querySelector('.gantt-right');
+      if (!right) return null;
+      return { left: right.scrollLeft, top: right.scrollTop };
+    }
+
+    function restoreGanttScroll(snapshot) {
+      if (state.view !== 'gantt') return;
+      const right = document.querySelector('.gantt-right');
+      const leftBody = document.querySelector('.gantt-left-body');
+      if (!right) return;
+      let left = snapshot ? snapshot.left : state.ganttScrollLeft;
+      let top = snapshot ? snapshot.top : state.ganttScrollTop;
+      if (!state.ganttScrollInitialized) {
+        left = ganttTodayScrollLeft(right);
+        top = 0;
+        state.ganttScrollInitialized = true;
+      }
+      right.scrollLeft = Math.max(0, left || 0);
+      right.scrollTop = Math.max(0, top || 0);
+      state.ganttScrollLeft = right.scrollLeft;
+      state.ganttScrollTop = right.scrollTop;
+      if (leftBody) leftBody.style.transform = `translateY(${-right.scrollTop}px)`;
+    }
+
+    function ganttTodayScrollLeft(right) {
+      const startDay = Number(right.dataset.startDay);
+      const dayWidth = Number(right.dataset.dayWidth);
+      if (!Number.isFinite(startDay) || !Number.isFinite(dayWidth)) return 0;
+      return Math.max(0, (localTodayDay() - startDay) * dayWidth - right.clientWidth * 0.25);
     }
 
     function flushPendingNodeScroll() {
@@ -201,6 +237,13 @@
             selected: state.filters.priority,
             options: [{ value: '', label: '全優先度' }].concat(priorityOptions())
           })}
+          ${renderDatePicker({
+            scope: 'filters',
+            field: 'date',
+            selected: state.filters.dateStart,
+            endDate: state.filters.dateEnd,
+            placeholder: '全期間'
+          })}
           <button class="sync-status" type="button" data-action="force-sync" title="同期">${icon(syncIconName())}<span>${h(syncLabel())}</span></button>
           ${renderActiveFilterChips()}
         </section>
@@ -219,6 +262,9 @@
       }
       if (state.filters.priority) {
         chips.push({ field: 'priority', label: `優先度: ${priorityLabel(state.filters.priority)}` });
+      }
+      if (state.filters.dateStart && state.filters.dateEnd) {
+        chips.push({ field: 'date', label: `作業日: ${formatDateFilterLabel()}` });
       }
       if (!chips.length) return '';
       return `
@@ -349,31 +395,19 @@
                   <th style="width:8%">進捗</th>
                 </tr>
               </thead>
-              <tbody>${renderListRowsWithGhosts()}</tbody>
+              <tbody>${renderListRows()}</tbody>
             </table>
           </div>
         </section>
       `;
     }
 
-    function renderListRowsWithGhosts() {
-      const matching = new Set(state.nodes.filter(matchesFilters).map(node => node.id));
-      const includeSet = new Set(matching);
-      matching.forEach(id => ancestorChain(id).forEach(ancestorId => includeSet.add(ancestorId)));
-      const roots = state.nodes.filter(node => !node.parentId).sort(compareNodeForList);
-      let html = '';
-
-      function visit(node) {
-        if (!includeSet.has(node.id)) return;
-        html += renderListRow(node);
-        if (state.collapsed.has(node.id)) return;
-        childrenOf(node.id).sort(compareNodeForList).forEach(visit);
-        if (canCreateChild(node)) {
-          html += renderListGhostRow(node.id, depthOf(node.id) + 1);
-        }
+    function renderListRows() {
+      let html = visibleTreeNodes().map(renderListRow).join('');
+      const root = state.nodesById.get(state.rootId);
+      if (!hasActiveFilters() && root && canCreateChild(root)) {
+        html += renderListGhostRow(root.id, 1);
       }
-
-      roots.forEach(visit);
       return html;
     }
 
@@ -392,13 +426,20 @@
               ${state.savingNodeIds.has(node.id) ? '<span class="saving-dot inline"></span>' : ''}
             </div>
           </td>
-          <td>${h(statusName(node.statusColumnId))}</td>
+          <td>${renderStatusChip(node.statusColumnId)}</td>
           <td>${renderAvatars(node.assigneeIds)}</td>
           <td><span class="chip">${h(priorityLabel(node.priority))}</span></td>
           <td><span class="due-badge ${dueClass(node.endDate)}">${h(formatRange(node.startDate, node.endDate))}</span></td>
           <td class="mono">${Math.round(node.progress)}%</td>
         </tr>
       `;
+    }
+
+    function renderStatusChip(statusColumnId) {
+      const column = state.statusById.get(statusColumnId);
+      const label = column ? column.name : statusName(statusColumnId);
+      const color = column ? column.color || defaultStatusColor(column) : defaultStatusColor({ name: label });
+      return `<span class="status-chip" style="--status-color:${h(color)}"><span class="status-chip-dot"></span>${h(label)}</span>`;
     }
 
     function renderListGhostRow(parentId, depth) {
@@ -416,29 +457,36 @@
     }
 
     function renderGantt() {
-      const rows = visibleTreeNodes();
-      const displayRows = ganttDisplayRows();
-      const scale = ganttScale(rows);
+      const displayRows = visibleTreeNodes();
+      const scale = ganttScale(displayRows);
       const emptyLaneCount = Math.max(10, Math.ceil((18 - displayRows.length) / 1));
       const height = Math.max((displayRows.length + emptyLaneCount) * GANTT_ROW_HEIGHT, 480);
       const today = localTodayDay();
       const todayLeft = (today - scale.startDay) * scale.dayWidth;
+      const activeScale = nearestGanttScaleFactor(state.ganttScaleFactor);
       return `
         <section class="view">
           <div class="view-toolbar">
             <div class="segmented">
               ${['day', 'week', 'month'].map(zoom => `<button class="button ${state.ganttZoom === zoom ? 'active' : ''}" data-zoom="${zoom}">${zoomLabel(zoom)}</button>`).join('')}
             </div>
-            <label class="gantt-scale-control" title="横の縮尺">
+            <div class="gantt-scale-control" title="横の縮尺">
               ${icon('scale')}
-              <input type="range" min="0.6" max="2.4" step="0.1" value="${h(state.ganttScaleFactor)}" data-gantt-scale>
-            </label>
+              <div class="gantt-scale-steps" role="group" aria-label="横の縮尺">
+                ${GANTT_SCALE_LEVELS.map(level => `
+                  <button class="gantt-scale-step ${level === activeScale ? 'active' : ''}" type="button" data-gantt-scale-level="${level}" aria-pressed="${level === activeScale}">
+                    ${h(ganttScalePercent(level))}
+                  </button>
+                `).join('')}
+              </div>
+            </div>
+            <button class="button secondary compact" type="button" data-action="gantt-jump-today">今日へ</button>
           </div>
           <div class="gantt-frame">
             <div class="gantt-left">
               <div class="gantt-axis-left"><span>タスク名</span><span>日付範囲</span><span>日数</span></div>
               <div class="gantt-left-body" style="height:${height}px">
-                ${displayRows.map(renderGanttLeftRow).join('')}
+                ${displayRows.map(renderGanttTreeRow).join('')}
               </div>
             </div>
             <div class="gantt-right" data-day-width="${scale.dayWidth}" data-start-day="${scale.startDay}">
@@ -448,38 +496,12 @@
                 ${renderGanttInteractionRows(displayRows, emptyLaneCount)}
                 ${todayLeft >= 0 && todayLeft <= scale.width ? `<div class="today-line" style="left:${todayLeft}px"></div>` : ''}
                 ${renderGanttArrows(displayRows, scale, height)}
-                ${displayRows.map((item, index) => item.type === 'node' ? renderGanttBar(item.node, index, scale) : '').join('')}
+                ${displayRows.map((node, index) => renderGanttBar(node, index, scale)).join('')}
               </div>
             </div>
           </div>
         </section>
       `;
-    }
-
-    function ganttDisplayRows() {
-      const matching = new Set(state.nodes.filter(matchesFilters).map(node => node.id));
-      const includeSet = new Set(matching);
-      matching.forEach(id => ancestorChain(id).forEach(ancestorId => includeSet.add(ancestorId)));
-      const roots = state.nodes.filter(node => !node.parentId).sort(compareNodeForList);
-      const items = [];
-
-      function visit(node) {
-        if (!includeSet.has(node.id)) return;
-        items.push({ type: 'node', node });
-        if (state.collapsed.has(node.id)) return;
-        childrenOf(node.id).sort(compareNodeForList).forEach(visit);
-        if (canCreateChild(node)) {
-          items.push({ type: 'ghost', parentId: node.id, depth: depthOf(node.id) + 1 });
-        }
-      }
-
-      roots.forEach(visit);
-      return items;
-    }
-
-    function renderGanttLeftRow(item) {
-      if (item.type === 'ghost') return renderGanttGhostRow(item);
-      return renderGanttTreeRow(item.node);
     }
 
     function renderGanttTreeRow(node) {
@@ -500,34 +522,17 @@
       `;
     }
 
-    function renderGanttGhostRow(item) {
-      return `
-        <div class="gantt-tree-row gantt-ghost-row">
-          <button class="gantt-ghost-button" type="button" data-action="create-child-shell" data-parent-id="${h(item.parentId)}">
-            <span class="indent" style="--tree-depth:${item.depth}"></span>
-            ${icon('plus')}
-            <span>タスクを追加</span>
-          </button>
-          <div class="gantt-tree-meta"></div>
-          <div class="gantt-tree-meta"></div>
-        </div>
-      `;
-    }
-
     function renderGanttInteractionRows(displayRows, emptyLaneCount) {
-      const rowsHtml = displayRows.map((item, index) => {
+      const rowsHtml = displayRows.map((node, index) => {
         const top = index * GANTT_ROW_HEIGHT;
-        if (item.type === 'ghost') {
-          return `<div class="gantt-row create-target" data-gantt-create-parent="${h(item.parentId)}" data-gantt-row-top="${top}" style="top:${top}px"></div>`;
+        const nodeAttr = `data-gantt-row-node="${h(node.id)}"`;
+        if (!node.startDate && !node.endDate) {
+          return `<div class="gantt-row create-target schedule-target" ${nodeAttr} data-gantt-schedule-node="${h(node.id)}" data-gantt-row-top="${top}" style="top:${top}px"><span class="gantt-row-hint">ドラッグして日程を設定</span></div>`;
         }
-        const node = item.node;
         if (node.hasChildren && canCreateChild(node)) {
-          return `<div class="gantt-row create-target" data-gantt-create-parent="${h(node.id)}" data-gantt-row-top="${top}" style="top:${top}px"></div>`;
+          return `<div class="gantt-row create-target" ${nodeAttr} data-gantt-create-parent="${h(node.id)}" data-gantt-row-top="${top}" style="top:${top}px"></div>`;
         }
-        if (node.isLeaf && !node.startDate && !node.endDate) {
-          return `<div class="gantt-row create-target schedule-target" data-gantt-schedule-node="${h(node.id)}" data-gantt-row-top="${top}" style="top:${top}px"></div>`;
-        }
-        return `<div class="gantt-row" style="top:${top}px"></div>`;
+        return `<div class="gantt-row" ${nodeAttr} style="top:${top}px"></div>`;
       });
       for (let i = 0; i < emptyLaneCount; i += 1) {
         const top = (displayRows.length + i) * GANTT_ROW_HEIGHT;
@@ -619,9 +624,7 @@
 
     function renderGanttArrows(displayRows, scale, height) {
       const rowIndex = new Map();
-      displayRows.forEach((item, index) => {
-        if (item.type === 'node') rowIndex.set(item.node.id, index);
-      });
+      displayRows.forEach((node, index) => rowIndex.set(node.id, index));
       const visible = new Set(Array.from(rowIndex.keys()));
       const paths = [];
       state.dependencies.forEach(dep => {

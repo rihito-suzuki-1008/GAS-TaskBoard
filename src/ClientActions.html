@@ -1,7 +1,76 @@
     // User actions, mutations, shell creation, comments, and gantt drags.
+    let createPreviewTimer = null;
+
     function defaultCreateStatusId() {
       const notStarted = state.statusColumns.find(column => column.name === '未着手');
       return notStarted ? notStarted.id : '';
+    }
+
+    function queueCreatePreview(parentId) {
+      if (createPreviewTimer) clearTimeout(createPreviewTimer);
+      createPreviewTimer = setTimeout(() => {
+        showCreatePreview(parentId);
+      }, 120);
+    }
+
+    function removeCreatePreview() {
+      if (createPreviewTimer) clearTimeout(createPreviewTimer);
+      createPreviewTimer = null;
+      document.querySelectorAll('[data-create-preview]').forEach(element => element.remove());
+      document.querySelectorAll('.gantt-row.preview-parent').forEach(element => element.classList.remove('preview-parent'));
+    }
+
+    function showCreatePreview(parentId) {
+      removeCreatePreview();
+      const parent = state.nodesById.get(parentId);
+      if (!parent || !canCreateChild(parent)) return;
+      if (state.view === 'list') {
+        showListCreatePreview(parentId);
+        return;
+      }
+      if (state.view === 'gantt') {
+        showGanttCreatePreview(parentId);
+      }
+    }
+
+    function showListCreatePreview(parentId) {
+      if (state.listSort.field !== 'sortOrder') return;
+      const anchorId = lastVisibleDescendantId(parentId);
+      const anchor = document.querySelector(`tr[data-tree-node="${cssEscape(anchorId)}"]`);
+      if (!anchor || !anchor.parentElement) return;
+      const preview = document.createElement('tr');
+      preview.className = 'tree-preview-row';
+      preview.dataset.createPreview = 'list';
+      preview.innerHTML = `
+        <td colspan="6">
+          <div class="tree-preview-cell">
+            <span class="indent" style="--tree-depth:${depthOf(parentId) + 1}"></span>
+            ${icon('plus')}
+            <span>新しいタスク</span>
+          </div>
+        </td>
+      `;
+      anchor.insertAdjacentElement('afterend', preview);
+      requestAnimationFrame(() => preview.classList.add('visible'));
+    }
+
+    function showGanttCreatePreview(parentId) {
+      if (state.listSort.field !== 'sortOrder') return;
+      const anchorId = lastVisibleDescendantId(parentId);
+      const anchor = document.querySelector(`.gantt-tree-row[data-tree-node="${cssEscape(anchorId)}"]`);
+      const frame = document.querySelector('.gantt-frame');
+      if (!anchor || !frame) return;
+      const frameRect = frame.getBoundingClientRect();
+      const anchorRect = anchor.getBoundingClientRect();
+      const preview = document.createElement('div');
+      preview.className = 'gantt-insert-preview';
+      preview.dataset.createPreview = 'gantt';
+      preview.style.top = `${anchorRect.bottom - frameRect.top}px`;
+      preview.innerHTML = '<span class="gantt-insert-chip">新しいタスク</span>';
+      frame.appendChild(preview);
+      const parentLane = document.querySelector(`[data-gantt-row-node="${cssEscape(parentId)}"]`);
+      if (parentLane) parentLane.classList.add('preview-parent');
+      requestAnimationFrame(() => preview.classList.add('visible'));
     }
 
     function makeLocalNode(config) {
@@ -347,6 +416,7 @@
         showToast('メンバー未登録のため保存不可', 'error');
         return;
       }
+      removeCreatePreview();
       if (state.creatingShell) return;
       const parent = state.nodesById.get(parentId);
       if (!parent) return;
@@ -565,8 +635,14 @@
       };
       const wasShell = state.shellNodeId === node.id;
       const parentId = node.parentId || state.rootId;
+      const reopenDraft = wasShell ? { ...patch, assigneeIds: patch.assigneeIds.slice() } : null;
       if (wasShell) {
         clearShellTracking();
+        state.drawerNodeId = '';
+        state.detailDraftNodeId = '';
+        state.detailDraft = null;
+        state.openDropdown = '';
+        state.focusDetailName = false;
       }
       return saveNodePatch(node.id, patch, () => {
         Object.assign(node, {
@@ -590,6 +666,27 @@
           if (options.closeAfter && state.drawerNodeId === node.id) {
             closeDrawer({ skipShellCleanup: true });
           }
+        },
+        onError: () => {
+          if (!wasShell) return;
+          const target = state.nodesById.get(node.id);
+          if (!target || !reopenDraft) return;
+          state.drawerNodeId = node.id;
+          state.detailDraftNodeId = node.id;
+          state.detailDraft = {
+            baseUpdatedAt: target.updatedAt || '',
+            name: reopenDraft.name,
+            statusColumnId: reopenDraft.statusColumnId,
+            priority: reopenDraft.priority,
+            assigneeIds: reopenDraft.assigneeIds.slice(),
+            startDate: reopenDraft.startDate,
+            endDate: reopenDraft.endDate,
+            description: reopenDraft.description,
+            dependency: { predecessorId: '', successorId: '' }
+          };
+          state.shellNodeId = node.id;
+          state.shellBaseline = detailSnapshotFromNode(target);
+          state.focusDetailName = true;
         }
       });
     }
@@ -833,16 +930,21 @@
     }
 
     function startGanttCreateDrag(event) {
-      if (!state.currentMember || state.creatingShell) return;
+      if (!state.currentMember || state.creatingShell || state.ganttCreateDrag) return;
+      if (event.button !== 0 || event.isPrimary === false) return;
       if (event.target.closest('.gantt-bar')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.stopImmediatePropagation) event.stopImmediatePropagation();
       const row = event.currentTarget;
       const parentId = row.dataset.ganttCreateParent || '';
       const scheduleNodeId = row.dataset.ganttScheduleNode || '';
       const right = row.closest('.gantt-right');
       const canvas = row.closest('.gantt-canvas');
+      const allowClickCreate = row.classList.contains('empty-lane');
       if ((!parentId && !scheduleNodeId) || !right || !canvas) return;
       const scheduleNode = scheduleNodeId ? state.nodesById.get(scheduleNodeId) : null;
-      if (scheduleNodeId && (!scheduleNode || !scheduleNode.isLeaf || scheduleNode.startDate || scheduleNode.endDate)) return;
+      if (scheduleNodeId && (!scheduleNode || scheduleNode.startDate || scheduleNode.endDate)) return;
       const dayWidth = Number(right.dataset.dayWidth);
       const scaleStart = Number(right.dataset.startDay);
       const rowTop = Number(row.dataset.ganttRowTop) || 0;
@@ -852,7 +954,6 @@
       let preview = null;
       let latestRange = null;
       let cancelled = false;
-      event.preventDefault();
       row.setPointerCapture(event.pointerId);
       state.ganttCreateDrag = { type: scheduleNodeId ? 'schedule' : 'create', nodeId: scheduleNodeId, parentId };
 
@@ -895,10 +996,15 @@
         finishDeferredRender();
       };
       const onMove = moveEvent => updatePreview(moveEvent);
-      const onUp = () => {
+      const onUp = upEvent => {
+        if (upEvent) {
+          upEvent.preventDefault();
+          upEvent.stopPropagation();
+        }
         const range = moved ? latestRange : rangeFromClientX(initialX);
         cleanup();
         if (cancelled || !range) return;
+        if (!moved && !allowClickCreate) return;
         if (scheduleNodeId) {
           const node = state.nodesById.get(scheduleNodeId);
           if (!node) return;

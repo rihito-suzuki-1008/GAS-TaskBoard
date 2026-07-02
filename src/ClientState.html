@@ -14,7 +14,7 @@
       spreadsheetId: '',
       rootId: '',
       view: 'kanban',
-      filters: { query: '', parentId: '', assigneeId: '', priority: '' },
+      filters: { query: '', parentId: '', assigneeId: '', priority: '', dateStart: '', dateEnd: '' },
       showGroupsInKanban: false,
       collapsed: new Set(),
       drawerNodeId: '',
@@ -26,10 +26,14 @@
       creatingShell: false,
       dialog: null,
       openDropdown: '',
+      calendarView: null,
       comments: new Map(),
       commentsLoading: new Set(),
       ganttZoom: 'day',
       ganttScaleFactor: 1,
+      ganttScrollLeft: 0,
+      ganttScrollTop: 0,
+      ganttScrollInitialized: false,
       listSort: { field: 'sortOrder', dir: 1 },
       draggedNodeId: '',
       draggingCardId: '',
@@ -58,6 +62,7 @@
     const LOCAL_CACHE_INDEX_KEY = 'gasTaskManager.cache.index.v2';
     const SYNC_INTERVAL_MS = 30000;
     const GANTT_ROW_HEIGHT = 40;
+    const GANTT_SCALE_LEVELS = [0.75, 1, 1.25, 1.5, 2];
     const STATUS_COLOR_PRESETS = ['#98A098', '#2F6FDB', '#1E6F5C', '#B8862B', '#C24444', '#5B7A99', '#7C6EE6', '#D65C9F'];
     const MEMBER_COLOR_PRESETS = ['#1E6F5C', '#2F6FDB', '#B8862B', '#C24444', '#5B7A99', '#7C6EE6', '#D65C9F', '#667066'];
     const ICON_PATHS = {
@@ -92,6 +97,7 @@
     document.addEventListener('click', event => {
       if (state.openDropdown && !event.target.closest('.dropdown')) {
         state.openDropdown = '';
+        state.calendarView = null;
         render();
       }
     });

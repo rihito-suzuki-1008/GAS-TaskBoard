@@ -51,6 +51,13 @@
       return start || end;
     }
 
+    function formatDateFilterLabel() {
+      const start = state.filters.dateStart;
+      const end = state.filters.dateEnd;
+      if (!start || !end) return '全期間';
+      return formatShortRange(start, end);
+    }
+
     function formatDateTime(value) {
       if (!value) return '';
       const date = new Date(value);
@@ -60,6 +67,18 @@
 
     function zoomLabel(value) {
       return value === 'day' ? '日' : value === 'week' ? '週' : '月';
+    }
+
+    function nearestGanttScaleFactor(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) return 1;
+      return GANTT_SCALE_LEVELS.reduce((best, level) => (
+        Math.abs(level - numeric) < Math.abs(best - numeric) ? level : best
+      ), GANTT_SCALE_LEVELS[0]);
+    }
+
+    function ganttScalePercent(value) {
+      return `${Math.round(value * 100)}%`;
     }
 
     function compareSortOrder(a, b) {
@@ -204,7 +223,14 @@
     }
 
     function hasActiveFilters() {
-      return Boolean(state.filters.query.trim() || state.filters.parentId || state.filters.assigneeId || state.filters.priority);
+      return Boolean(
+        state.filters.query.trim()
+        || state.filters.parentId
+        || state.filters.assigneeId
+        || state.filters.priority
+        || state.filters.dateStart
+        || state.filters.dateEnd
+      );
     }
 
     function syncIconName() {
@@ -247,6 +273,34 @@
     function monthStartDay(day) {
       const date = new Date(day * 86400000);
       return Math.floor(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1) / 86400000);
+    }
+
+    function calendarMonthLabel(monthDay) {
+      const date = new Date(monthStartDay(monthDay) * 86400000);
+      return `${date.getUTCFullYear()}年${date.getUTCMonth() + 1}月`;
+    }
+
+    function shiftMonthDay(day, deltaMonths) {
+      const date = new Date(monthStartDay(day) * 86400000);
+      return Math.floor(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + deltaMonths, 1) / 86400000);
+    }
+
+    function calendarGridDays(monthDay) {
+      const first = monthStartDay(monthDay);
+      const firstDate = new Date(first * 86400000);
+      const gridStart = first - firstDate.getUTCDay();
+      return Array.from({ length: 42 }, (_, index) => gridStart + index);
+    }
+
+    function isSameCalendarMonth(day, monthDay) {
+      return monthStartDay(day) === monthStartDay(monthDay);
+    }
+
+    function dateFilterRange() {
+      if (!state.filters.dateStart || !state.filters.dateEnd) return null;
+      const start = dateToDay(state.filters.dateStart);
+      const end = dateToDay(state.filters.dateEnd);
+      return { start: Math.min(start, end), end: Math.max(start, end) };
     }
 
     function alignTickDay(day, step) {
