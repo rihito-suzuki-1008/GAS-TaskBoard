@@ -70,10 +70,9 @@
               <section class="drawer-section">
                 <div class="section-title">コメント</div>
                 <div class="comment-list">
-                  ${comments ? comments.map(renderComment).join('') : '<div class="meta-line">読み込み中</div>'}
+                  ${comments ? renderCommentThreads(comments) : '<div class="meta-line">読み込み中</div>'}
                   ${comments && !comments.length ? '<div class="meta-line">コメントなし</div>' : ''}
-                  <textarea class="textarea" id="commentText" placeholder="コメント"></textarea>
-                  <button class="button secondary" data-action="post-comment">コメントを保存</button>
+                  ${renderCommentComposer(node.id)}
                 </div>
               </section>
             </div>
@@ -125,12 +124,80 @@
       `;
     }
 
-    function renderComment(comment) {
+    function renderCommentThreads(comments) {
+      const byId = new Map((comments || []).map(comment => [comment.id, comment]));
+      const repliesByParent = new Map();
+      const parents = [];
+      (comments || []).forEach(comment => {
+        const parentId = comment.parentCommentId || '';
+        if (parentId && byId.has(parentId)) {
+          if (!repliesByParent.has(parentId)) repliesByParent.set(parentId, []);
+          repliesByParent.get(parentId).push(comment);
+        } else {
+          parents.push(comment);
+        }
+      });
+      const byTime = (a, b) => String(a.timestamp || '').localeCompare(String(b.timestamp || ''));
+      parents.sort(byTime);
+      repliesByParent.forEach(replies => replies.sort(byTime));
+      return parents.map(parent => `
+        <div class="comment-thread">
+          ${renderComment(parent, parent.id)}
+          ${(repliesByParent.get(parent.id) || []).map(reply => renderComment(reply, parent.id)).join('')}
+        </div>
+      `).join('');
+    }
+
+    function renderComment(comment, threadParentId) {
+      const isReply = Boolean(comment.parentCommentId);
+      const mentions = Array.isArray(comment.mentions) ? comment.mentions : [];
+      const selfMentioned = state.currentMember && mentions.includes(state.currentMember.id);
+      const member = state.memberById.get(comment.authorId);
       return `
-        <article class="comment">
-          <div class="comment-head"><strong>${h(comment.authorName)}</strong><span class="mono">${h(formatDateTime(comment.timestamp))}</span></div>
-          <div class="comment-text">${h(comment.text)}</div>
+        <article class="comment ${isReply ? 'reply' : ''} ${selfMentioned ? 'mentioned-self' : ''}">
+          <div class="comment-head">
+            <div class="comment-author">${renderAvatar(member || { name: comment.authorName || '退職者', email: '', color: 'var(--color-text-tertiary)' })}<strong>${h(comment.authorName || '不明')}</strong></div>
+            <span class="mono">${h(formatDateTime(comment.timestamp))}</span>
+          </div>
+          <div class="comment-text markdown-body">${renderMarkdown(comment.text, mentions)}</div>
+          <div class="comment-actions">
+            <button class="button ghost compact" type="button" data-action="reply-comment" data-comment-id="${h(threadParentId || comment.id)}" data-comment-author="${h(comment.authorName || 'このコメント')}">返信</button>
+          </div>
         </article>
+      `;
+    }
+
+    function renderCommentComposer(nodeId) {
+      const reply = state.commentReplyTo && state.commentReplyTo.nodeId === nodeId ? state.commentReplyTo : null;
+      const draft = state.commentDrafts[nodeId] || '';
+      const mention = state.commentMention && state.commentMention.nodeId === nodeId ? state.commentMention : null;
+      return `
+        <div class="comment-composer">
+          ${reply ? `
+            <div class="reply-mode">
+              <span>${h(reply.authorName)}さんのコメントに返信</span>
+              <button class="button ghost compact" type="button" data-action="cancel-comment-reply">キャンセル</button>
+            </div>
+          ` : ''}
+          <textarea class="textarea" id="commentText" data-comment-text="${h(nodeId)}" placeholder="コメント" ${state.currentMember ? '' : 'disabled'}>${h(draft)}</textarea>
+          ${mention && mention.active ? renderMentionMenu(mention) : ''}
+          <button class="button secondary" data-action="post-comment" ${state.currentMember ? '' : 'disabled'}>コメントを保存</button>
+        </div>
+      `;
+    }
+
+    function renderMentionMenu(mention) {
+      const options = mention.options || [];
+      if (!options.length) return '';
+      return `
+        <div class="mention-menu" style="--mention-left:${Number(mention.left) || 0}px;--mention-top:${Number(mention.top) || 0}px" role="listbox">
+          ${options.map((member, index) => `
+            <button class="mention-option ${index === mention.selectedIndex ? 'selected' : ''}" type="button" data-action="select-mention" data-member-id="${h(member.id)}" role="option" aria-selected="${index === mention.selectedIndex ? 'true' : 'false'}">
+              ${renderAvatar(member)}
+              <span>${h(member.name)}</span>
+            </button>
+          `).join('')}
+        </div>
       `;
     }
 
@@ -191,8 +258,42 @@
         actionLabel: '依存関係を削除',
         destructive: true
       });
+      if (dialog.type === 'join') return renderJoinDialog(dialog);
       if (dialog.type === 'members') return renderMembersDialog();
       return '';
+    }
+
+    function renderJoinDialog(dialog) {
+      const draft = dialog.draft;
+      const submitting = Boolean(dialog.submitting);
+      return `
+        ${renderOverlay('close-dialog')}
+        <div class="modal-shell">
+          <form class="modal" id="joinForm">
+            <header class="modal-head">
+              <div class="modal-title">参加</div>
+              <button class="button ghost icon" type="button" data-action="close-dialog">${icon('x')}</button>
+            </header>
+            <div class="modal-body">
+              <div class="drawer-section compact-section">
+                <div class="meta-line"><span class="mono">${h(state.currentEmail || '')}</span> として参加します</div>
+                <label class="field">
+                  <span class="field-label">氏名</span>
+                  <input class="input" data-draft-scope="join" data-draft-field="name" value="${h(draft.name)}" autofocus>
+                </label>
+                <div class="field">
+                  <span class="field-label">表示色</span>
+                  ${renderColorPicker('join', 'color', draft.color, MEMBER_COLOR_PRESETS)}
+                </div>
+              </div>
+            </div>
+            <footer class="modal-foot">
+              <button class="button secondary" type="button" data-action="close-dialog" ${submitting ? 'disabled' : ''}>あとで</button>
+              ${renderSubmitButton({ submitting, iconName: 'check', label: '参加する' })}
+            </footer>
+          </form>
+        </div>
+      `;
     }
 
     function renderNodeDialog(dialog) {
@@ -215,7 +316,10 @@
                 </label>
                 <label class="field wide">
                   <span class="field-label">親</span>
-                  ${renderDropdown({ scope: 'node', field: 'parentId', selected: draft.parentId, options: treeOrderedNodes().map(node => ({ value: node.id, label: `${'　'.repeat(depthOf(node.id))}${node.name}` })) })}
+                  ${renderDropdown({ scope: 'node', field: 'parentId', selected: draft.parentId, options: treeOrderedNodes().map(node => ({
+                    value: node.id,
+                    label: node.id === state.rootId ? '案件直下' : `${'　'.repeat(taskDepthOf(node.id))}${node.name}`
+                  })) })}
                 </label>
                 <label class="field">
                   <span class="field-label">ステータス</span>

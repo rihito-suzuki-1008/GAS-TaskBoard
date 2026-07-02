@@ -36,7 +36,7 @@ HEADERS[SHEET.NODES] = [
 HEADERS[SHEET.MEMBERS] = ['MemberId', 'Name', 'Email', 'Color'];
 HEADERS[SHEET.STATUS_COLUMNS] = ['ColumnId', 'Name', 'SortOrder', 'IsDoneColumn', 'Color'];
 HEADERS[SHEET.DEPENDENCIES] = ['DependencyId', 'PredecessorNodeId', 'SuccessorNodeId'];
-HEADERS[SHEET.COMMENTS] = ['CommentId', 'NodeId', 'AuthorId', 'AuthorName', 'Timestamp', 'Text'];
+HEADERS[SHEET.COMMENTS] = ['CommentId', 'NodeId', 'AuthorId', 'AuthorName', 'Timestamp', 'Text', 'ParentCommentId', 'Mentions'];
 
 var TEXT_COLUMNS = {};
 TEXT_COLUMNS[SHEET.NODES] = [
@@ -56,6 +56,6 @@ TEXT_COLUMNS[SHEET.NODES] = [
 TEXT_COLUMNS[SHEET.MEMBERS] = ['MemberId', 'Email', 'Color'];
 TEXT_COLUMNS[SHEET.STATUS_COLUMNS] = ['ColumnId', 'Color'];
 TEXT_COLUMNS[SHEET.DEPENDENCIES] = ['DependencyId', 'PredecessorNodeId', 'SuccessorNodeId'];
-TEXT_COLUMNS[SHEET.COMMENTS] = ['CommentId', 'NodeId', 'AuthorId', 'Timestamp'];
+TEXT_COLUMNS[SHEET.COMMENTS] = ['CommentId', 'NodeId', 'AuthorId', 'Timestamp', 'ParentCommentId', 'Mentions'];
 
 var PRIORITIES = ['High', 'Mid', 'Low'];

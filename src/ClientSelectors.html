@@ -31,8 +31,8 @@
       const rows = [];
       function visit(node) {
         if (!includeSet.has(node.id)) return;
-        rows.push(node);
-        if (state.collapsed.has(node.id)) return;
+        if (node.id !== state.rootId) rows.push(node);
+        if (node.id !== state.rootId && state.collapsed.has(node.id)) return;
         childrenOf(node.id).sort(compareNodeForList).forEach(visit);
       }
       roots.forEach(visit);
@@ -80,6 +80,14 @@
 
     function depthOf(nodeId) {
       return ancestorChain(nodeId).length;
+    }
+
+    function taskDepthOf(nodeId) {
+      return Math.max(0, depthOf(nodeId) - 1);
+    }
+
+    function childTaskDepth(parentId) {
+      return parentId === state.rootId ? 0 : taskDepthOf(parentId) + 1;
     }
 
     function lastVisibleDescendantId(parentId) {

@@ -1,6 +1,6 @@
     // Main shell, board, list, and gantt rendering.
     function render() {
-      if (state.ganttCreateDrag) {
+      if (state.ganttCreateDrag || state.textComposing) {
         state.renderDeferred = true;
         return;
       }
@@ -25,7 +25,7 @@
             <button class="button secondary" data-action="force-sync" title="強制同期">${icon('refresh')}強制同期</button>
           </div>
         </header>
-        ${state.currentMember ? '' : `<div class="banner">このメールアドレスはメンバー未登録です。保存操作は利用不可</div>`}
+        ${state.currentMember ? '' : `<button class="banner banner-action" type="button" data-action="join-member">このメールアドレスはメンバー未登録です。保存操作は利用不可</button>`}
         ${renderFilters()}
         <main class="main">${renderMain()}</main>
       `;
@@ -131,7 +131,7 @@
         patchRootContent(root, renderDrawer());
       }
       bindFloatingRoot(root);
-      bindDrawerComments();
+      bindDrawerComments(root);
     }
 
     function patchRootContent(root, html) {
@@ -152,9 +152,21 @@
       const active = document.activeElement;
       const scope = root.contains(active) && active.dataset ? active.dataset.draftScope : null;
       const field = scope ? active.dataset.draftField : null;
+      const commentText = root.contains(active) && active.dataset ? active.dataset.commentText : null;
       const selStart = scope && 'selectionStart' in active ? active.selectionStart : null;
       const selEnd = scope && 'selectionEnd' in active ? active.selectionEnd : null;
+      const commentSelStart = commentText && 'selectionStart' in active ? active.selectionStart : null;
+      const commentSelEnd = commentText && 'selectionEnd' in active ? active.selectionEnd : null;
       mutate();
+      if (commentText) {
+        const nextComment = root.querySelector(`[data-comment-text="${cssEscape(commentText)}"]`);
+        if (!nextComment) return;
+        nextComment.focus();
+        if (commentSelStart !== null && commentSelEnd !== null && nextComment.setSelectionRange) {
+          try { nextComment.setSelectionRange(commentSelStart, commentSelEnd); } catch (error) { /* not a text selection field */ }
+        }
+        return;
+      }
       if (!scope || !field) return;
       const next = root.querySelector(`[data-draft-scope="${cssEscape(scope)}"][data-draft-field="${cssEscape(field)}"]`);
       if (!next) return;
@@ -189,6 +201,7 @@
     }
 
     function bindDialogForms() {
+      bindFormOnce('joinForm', joinAsMemberFromDialog);
       bindFormOnce('nodeDialogForm', createNodeFromDialog);
       bindFormOnce('statusDialogForm', saveStatusFromDialog);
       bindFormOnce('memberForm', saveMemberFromDialog);
@@ -203,12 +216,19 @@
       });
     }
 
-    function bindDrawerComments() {
+    function bindDrawerComments(root) {
       const node = state.nodesById.get(state.drawerNodeId);
       if (!node) return;
       if (!state.comments.has(node.id) && !state.commentsLoading.has(node.id)) {
         loadComments(node.id);
       }
+      if (state.commentReplyTo && state.commentReplyTo.nodeId !== node.id) {
+        state.commentReplyTo = null;
+      }
+      root.querySelectorAll('[data-comment-text]').forEach(textarea => {
+        bindOnce(textarea, 'input', event => updateCommentDraftFromTextarea(event.currentTarget));
+        bindOnce(textarea, 'keydown', handleCommentKeydown);
+      });
       if (state.focusDetailName) {
         state.focusDetailName = false;
         focusDetailNameInput();
@@ -228,7 +248,9 @@
             field: 'parentId',
             placeholder: '全階層',
             selected: state.filters.parentId,
-            options: [{ value: '', label: '全階層' }].concat(treeOrderedNodes().map(node => ({ value: node.id, label: `${'　'.repeat(depthOf(node.id))}${node.name}` })))
+            options: [{ value: '', label: '全階層' }].concat(treeOrderedNodes()
+              .filter(node => node.id !== state.rootId)
+              .map(node => ({ value: node.id, label: `${'　'.repeat(taskDepthOf(node.id))}${node.name}` })))
           })}
           ${renderDropdown({
             scope: 'filters',
@@ -289,10 +311,11 @@
         <section class="view">
           <div class="view-toolbar">
             <label class="switch"><input id="toggleGroups" type="checkbox" ${checked(state.showGroupsInKanban)}> 親ノードも表示</label>
+            <button class="button secondary compact" type="button" data-action="toggle-member-rail" title="担当者一覧の表示を切り替え">${icon('users')}${state.kanbanMemberRailCollapsed ? '担当者を表示' : '担当者を隠す'}</button>
             <button class="button secondary" data-action="new-status">${icon('plus')}列を追加</button>
           </div>
-          <div class="board-layout">
-            ${renderMemberRail()}
+          <div class="board-layout ${state.kanbanMemberRailCollapsed ? 'member-rail-collapsed' : ''}">
+            ${state.kanbanMemberRailCollapsed ? '' : renderMemberRail()}
             <div class="columns">
               ${state.statusColumns.map(column => renderKanbanColumn(column, visibleCards)).join('')}
             </div>
@@ -305,7 +328,10 @@
       const activeNodes = state.nodes.filter(node => node.id !== state.rootId);
       return `
         <aside class="member-rail">
-          <div class="rail-title">担当者</div>
+          <div class="rail-head">
+            <div class="rail-title">担当者</div>
+            <button class="button ghost icon compact" type="button" data-action="toggle-member-rail" title="担当者一覧を隠す">${icon('x')}</button>
+          </div>
           <button class="member-filter ${state.filters.assigneeId ? '' : 'active'}" data-action="filter-member" data-member-id="">
             ${icon('users')}
             <span class="member-filter-name">全員</span>
@@ -406,13 +432,13 @@
       let html = visibleTreeNodes().map(renderListRow).join('');
       const root = state.nodesById.get(state.rootId);
       if (!hasActiveFilters() && root && canCreateChild(root)) {
-        html += renderListGhostRow(root.id, 1);
+        html += renderListGhostRow(root.id, childTaskDepth(root.id));
       }
       return html;
     }
 
     function renderListRow(node) {
-      const depth = depthOf(node.id);
+      const depth = taskDepthOf(node.id);
       const showAdd = canCreateChild(node);
       return `
         <tr class="${state.shellNodeId === node.id ? 'shell-node-row' : ''}" data-tree-node="${h(node.id)}" draggable="${node.id !== state.rootId}">
@@ -480,6 +506,7 @@
                 `).join('')}
               </div>
             </div>
+            <button class="button primary compact" type="button" data-action="create-child-shell" data-parent-id="${h(state.rootId)}">${icon('plus')}タスクを追加</button>
             <button class="button secondary compact" type="button" data-action="gantt-jump-today">今日へ</button>
           </div>
           <div class="gantt-frame">
@@ -509,7 +536,7 @@
       return `
         <div class="gantt-tree-row ${state.shellNodeId === node.id ? 'shell-node-row' : ''}" data-tree-node="${h(node.id)}" draggable="${node.id !== state.rootId}">
           <div class="gantt-tree-main">
-            <span class="indent" style="--tree-depth:${depthOf(node.id)}"></span>
+            <span class="indent" style="--tree-depth:${taskDepthOf(node.id)}"></span>
             ${node.hasChildren ? `<button class="button ghost icon compact" data-toggle-node="${h(node.id)}">${icon(state.collapsed.has(node.id) ? 'chevron-right' : 'chevron-down')}</button>` : '<span class="button icon compact" aria-hidden="true"></span>'}
             <span class="tree-name ${node.name ? '' : 'placeholder'}" data-open-node="${h(node.id)}">${h(node.name || '新しいタスク')}</span>
             <button class="button ghost icon compact" data-open-node="${h(node.id)}" title="編集">${icon('edit')}</button>
@@ -616,7 +643,7 @@
           ${state.savingNodeIds.has(node.id) ? '<span class="saving-dot"></span>' : ''}
           <span class="gantt-progress" style="width:${Math.max(0, Math.min(100, node.progress))}%"></span>
           ${canDrag ? '<span class="bar-handle left" data-handle="left"></span>' : ''}
-          <span class="gantt-label">${h(node.name || '新しいタスク')} ${Math.round(node.progress)}%</span>
+          <span class="gantt-label">${h(node.name || '新しいタスク')}</span>
           ${canDrag ? '<span class="bar-handle right" data-handle="right"></span>' : ''}
         </div>
       `;

@@ -127,7 +127,9 @@ function clientComment_(comment) {
     authorId: cleanString_(comment.AuthorId),
     authorName: cleanString_(comment.AuthorName),
     timestamp: cleanString_(comment.Timestamp),
-    text: cleanString_(comment.Text)
+    text: cleanString_(comment.Text),
+    parentCommentId: cleanString_(comment.ParentCommentId),
+    mentions: splitCsv_(comment.Mentions)
   };
 }
 

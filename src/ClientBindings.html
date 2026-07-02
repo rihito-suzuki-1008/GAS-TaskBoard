@@ -8,10 +8,17 @@
       });
       bindActionAndDraft(app);
       const query = document.getElementById('filterQuery');
-      if (query) query.addEventListener('input', () => {
-        state.filters.query = query.value;
-        scheduleRender();
-      });
+      if (query) {
+        bindTextCompositionGuard(query, () => {
+          state.filters.query = query.value;
+          scheduleRender();
+        });
+        query.addEventListener('input', event => {
+          state.filters.query = query.value;
+          if (event.isComposing || state.textComposing) return;
+          scheduleRender();
+        });
+      }
     }
 
     // Shared by the main shell (fresh nodes every render, so plain addEventListener
@@ -22,9 +29,29 @@
         bindOnce(element, 'click', handleActionClick);
       });
       container.querySelectorAll('[data-draft-scope]').forEach(element => {
+        bindTextCompositionGuard(element, handleDraftInput);
         bindOnce(element, 'input', handleDraftInput);
         bindOnce(element, 'change', handleDraftInput);
       });
+    }
+
+    function bindTextCompositionGuard(element, onEnd) {
+      if (!isTextEntryElement(element)) return;
+      bindOnce(element, 'compositionstart', () => {
+        state.textComposing = true;
+      });
+      bindOnce(element, 'compositionend', event => {
+        state.textComposing = false;
+        if (onEnd) onEnd(event);
+        finishDeferredRender();
+      });
+    }
+
+    function isTextEntryElement(element) {
+      if (!element) return false;
+      if (element.tagName === 'TEXTAREA') return true;
+      if (element.tagName !== 'INPUT') return false;
+      return ['', 'email', 'password', 'search', 'tel', 'text', 'url'].includes(element.type || '');
     }
 
     function bindDropdowns(container) {
@@ -255,14 +282,25 @@
         });
       });
       const right = document.querySelector('.gantt-right');
+      const left = document.querySelector('.gantt-left');
       const leftBody = document.querySelector('.gantt-left-body');
       if (right && leftBody) {
-        right.addEventListener('scroll', () => {
+        const syncGanttScroll = () => {
           state.ganttScrollLeft = right.scrollLeft;
           state.ganttScrollTop = right.scrollTop;
           state.ganttScrollInitialized = true;
           leftBody.style.transform = `translateY(${-right.scrollTop}px)`;
-        });
+        };
+        right.addEventListener('scroll', syncGanttScroll);
+        if (left) {
+          left.addEventListener('wheel', event => {
+            if (!event.deltaX && !event.deltaY) return;
+            event.preventDefault();
+            right.scrollTop += event.deltaY;
+            right.scrollLeft += event.deltaX;
+            syncGanttScroll();
+          }, { passive: false });
+        }
       }
       document.querySelectorAll('[data-gantt-bar]').forEach(bar => {
         bar.addEventListener('pointerdown', startGanttDrag);
@@ -307,6 +345,11 @@
         render();
         return;
       }
+      if (action === 'toggle-member-rail') {
+        state.kanbanMemberRailCollapsed = !state.kanbanMemberRailCollapsed;
+        render();
+        return;
+      }
       if (action === 'set-color') {
         const target = draftForScope(event.currentTarget.dataset.scope);
         if (target) {
@@ -316,6 +359,7 @@
         return;
       }
       if (action === 'members') return openMembersDialog();
+      if (action === 'join-member') return openJoinDialog();
       if (action === 'new-node') return openNodeCreateDialog(event.currentTarget.dataset.parentId, event.currentTarget.dataset.statusId);
       if (action === 'new-status') return openStatusDialog();
       if (action === 'edit-status') return openStatusDialog(event.currentTarget.dataset.columnId);
@@ -329,6 +373,9 @@
       if (action === 'delete-node') return deleteNodeConfirmed();
       if (action === 'delete-status') return deleteStatusConfirmed();
       if (action === 'post-comment') return postComment();
+      if (action === 'reply-comment') return replyToComment(event.currentTarget.dataset.commentId, event.currentTarget.dataset.commentAuthor);
+      if (action === 'cancel-comment-reply') return cancelCommentReply();
+      if (action === 'select-mention') return selectMention(event.currentTarget.dataset.memberId);
       if (action === 'add-predecessor') return addPredecessor();
       if (action === 'add-successor') return addSuccessor();
       if (action === 'confirm-dependency-delete') return confirmDependencyDelete(event.currentTarget.dataset.dependencyId);
@@ -532,6 +579,7 @@
       if (scope === 'node') return state.dialog && state.dialog.type === 'node' ? state.dialog.draft : null;
       if (scope === 'status') return state.dialog && state.dialog.type === 'status' ? state.dialog.draft : null;
       if (scope === 'member') return state.dialog && state.dialog.type === 'members' ? state.dialog.draft : null;
+      if (scope === 'join') return state.dialog && state.dialog.type === 'join' ? state.dialog.draft : null;
       if (scope === 'detail') return state.detailDraft;
       if (scope === 'dependency') return dependencyDraft();
       if (scope === 'confirm') return state.dialog;

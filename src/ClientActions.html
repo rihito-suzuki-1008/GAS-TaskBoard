@@ -44,7 +44,7 @@
       preview.innerHTML = `
         <td colspan="6">
           <div class="tree-preview-cell">
-            <span class="indent" style="--tree-depth:${depthOf(parentId) + 1}"></span>
+            <span class="indent" style="--tree-depth:${childTaskDepth(parentId)}"></span>
             ${icon('plus')}
             <span>新しいタスク</span>
           </div>
@@ -278,6 +278,61 @@
       render();
     }
 
+    function openJoinDialog() {
+      state.dialog = {
+        type: 'join',
+        draft: {
+          name: (state.currentEmail || '').split('@')[0] || '',
+          color: defaultMemberColor()
+        }
+      };
+      render();
+    }
+
+    function joinAsMemberFromDialog() {
+      const dialog = state.dialog;
+      if (!dialog || dialog.type !== 'join') return;
+      const draft = { ...dialog.draft };
+      if (!cleanText(draft.name)) {
+        showToast('氏名を入力', 'error');
+        return;
+      }
+      const memberId = newClientId('member');
+      const optimisticMember = {
+        id: memberId,
+        name: cleanText(draft.name),
+        email: normalizeClientEmail(state.currentEmail),
+        color: normalizeHex(draft.color) || defaultMemberColor()
+      };
+      const previousMembers = cloneValue(state.members);
+      const previousMember = state.currentMember ? cloneValue(state.currentMember) : null;
+      const previousUnregistered = state.unregistered;
+      dialog.submitting = true;
+      queueBackgroundMutation('members', 'joinAsMember', {
+        clientMemberId: memberId,
+        name: draft.name,
+        color: draft.color
+      }, () => {
+        const index = state.members.findIndex(member => member.email === optimisticMember.email || member.id === memberId);
+        if (index === -1) state.members.push(optimisticMember);
+        else state.members[index] = optimisticMember;
+        state.currentMember = optimisticMember;
+        state.unregistered = false;
+      }, () => {
+        state.members = previousMembers;
+        state.currentMember = previousMember;
+        state.unregistered = previousUnregistered;
+        if (state.dialog && state.dialog.type === 'join') state.dialog.submitting = false;
+      }, {
+        onSuccess: () => {
+          state.dialog = null;
+        },
+        onError: () => {
+          state.joinPromptDismissed = false;
+        }
+      });
+    }
+
     async function saveMemberFromDialog() {
       const draft = { ...state.dialog.draft };
       if (!draft.name.trim() || !draft.email.trim()) {
@@ -372,6 +427,10 @@
     function openNode(nodeId, options = {}) {
       const node = state.nodesById.get(nodeId);
       if (!node) return;
+      if (state.drawerNodeId !== nodeId) {
+        state.commentReplyTo = null;
+        state.commentMention = null;
+      }
       state.drawerNodeId = nodeId;
       initializeDetailDraft(node);
       if (options.shell) {
@@ -392,6 +451,8 @@
       state.detailDraft = null;
       state.openDropdown = '';
       state.focusDetailName = false;
+      state.commentReplyTo = null;
+      state.commentMention = null;
       render();
       if (shellAction && shellAction.type === 'delete') {
         deleteShellNode(shellAction.nodeId);
@@ -406,6 +467,9 @@
       // completes and its result still merges in via applyMutationResult, and locking
       // the whole dialog would amount to a blocking spinner, which this app avoids in
       // favor of small, scoped indicators (only the submit button itself locks).
+      if (state.dialog && state.dialog.type === 'join') {
+        state.joinPromptDismissed = true;
+      }
       state.dialog = null;
       state.openDropdown = '';
       if (shouldRender) render();
@@ -878,6 +942,14 @@
     }
 
     async function loadComments(nodeId) {
+      const node = state.nodesById.get(nodeId);
+      // A node without updatedAt is an optimistic local creation whose addNode is
+      // still in flight; the server can't know it yet, so getComments would fail
+      // with "ノードが見つかりません". A brand-new node has no comments anyway.
+      if (node && !node.updatedAt) {
+        state.comments.set(nodeId, []);
+        return;
+      }
       state.commentsLoading.add(nodeId);
       try {
         const comments = await serverCall('getComments', nodeId);
@@ -896,16 +968,24 @@
       const text = textarea ? textarea.value.trim() : '';
       if (!text) return;
       const commentId = newClientId('comment');
+      const reply = state.commentReplyTo && state.commentReplyTo.nodeId === nodeId ? state.commentReplyTo : null;
+      const mentions = extractMentionIdsFromText(nodeId, text);
       const comment = {
         id: commentId,
         nodeId,
         authorId: state.currentMember ? state.currentMember.id : '',
         authorName: state.currentMember ? state.currentMember.name : '',
         timestamp: nowIsoLocal(),
-        text
+        text,
+        parentCommentId: reply ? reply.commentId : '',
+        mentions
       };
       if (textarea) textarea.value = '';
-      queueBackgroundMutation(`comments:${nodeId}`, 'addComment', { commentId, nodeId, text }, () => {
+      state.commentDrafts[nodeId] = '';
+      state.commentMentionIds[nodeId] = [];
+      state.commentMention = null;
+      state.commentReplyTo = null;
+      queueBackgroundMutation(`comments:${nodeId}`, 'addComment', { commentId, nodeId, text, parentCommentId: comment.parentCommentId, mentions }, () => {
         const comments = state.comments.get(nodeId) || [];
         comments.push(comment);
         state.comments.set(nodeId, comments);
@@ -915,6 +995,129 @@
         state.comments.set(nodeId, comments);
         state.commentCounts[nodeId] = comments.length;
       });
+    }
+
+    function replyToComment(commentId, authorName) {
+      const nodeId = state.drawerNodeId;
+      if (!nodeId || !commentId) return;
+      state.commentReplyTo = { nodeId, commentId, authorName: authorName || 'このコメント' };
+      state.commentMention = null;
+      render();
+      requestAnimationFrame(() => {
+        const textarea = document.getElementById('commentText');
+        if (textarea) textarea.focus();
+      });
+    }
+
+    function cancelCommentReply() {
+      state.commentReplyTo = null;
+      render();
+    }
+
+    function updateCommentDraftFromTextarea(textarea) {
+      const nodeId = textarea.dataset.commentText || state.drawerNodeId;
+      state.commentDrafts[nodeId] = textarea.value;
+      updateCommentMention(textarea, nodeId);
+    }
+
+    function updateCommentMention(textarea, nodeId) {
+      const caret = textarea.selectionStart || 0;
+      const before = textarea.value.slice(0, caret);
+      const match = before.match(/(^|\s)@([^\s@]*)$/);
+      if (!match) {
+        if (!state.commentMention) return;
+        state.commentMention = null;
+        render();
+        return;
+      }
+      const query = match[2].toLowerCase();
+      const options = state.members
+        .filter(member => member.name.toLowerCase().includes(query) || member.email.toLowerCase().includes(query))
+        .slice(0, 6);
+      const lineStart = before.lastIndexOf('\n') + 1;
+      const lineText = before.slice(lineStart);
+      const nextMention = {
+        nodeId,
+        active: true,
+        query,
+        start: caret - match[2].length - 1,
+        end: caret,
+        selectedIndex: 0,
+        options,
+        left: Math.min(280, Math.max(0, lineText.length * 7)),
+        top: Math.min(180, Math.max(0, before.split('\n').length * 22))
+      };
+      const previous = state.commentMention;
+      state.commentMention = nextMention;
+      if (previous
+        && previous.nodeId === nextMention.nodeId
+        && previous.query === nextMention.query
+        && previous.start === nextMention.start
+        && previous.end === nextMention.end
+        && previous.options.length === nextMention.options.length) {
+        return;
+      }
+      render();
+    }
+
+    function selectMention(memberId) {
+      const nodeId = state.drawerNodeId;
+      const member = state.memberById.get(memberId);
+      const mention = state.commentMention;
+      if (!nodeId || !member || !mention || mention.nodeId !== nodeId) return;
+      const text = state.commentDrafts[nodeId] || '';
+      const nextText = `${text.slice(0, mention.start)}@${member.name} ${text.slice(mention.end)}`;
+      state.commentDrafts[nodeId] = nextText;
+      const ids = state.commentMentionIds[nodeId] || [];
+      if (!ids.includes(member.id)) ids.push(member.id);
+      state.commentMentionIds[nodeId] = ids;
+      state.commentMention = null;
+      render();
+      requestAnimationFrame(() => {
+        const textarea = document.getElementById('commentText');
+        if (!textarea) return;
+        const caret = mention.start + member.name.length + 2;
+        textarea.focus();
+        textarea.setSelectionRange(caret, caret);
+      });
+    }
+
+    function handleCommentKeydown(event) {
+      const mention = state.commentMention;
+      if (!mention || !mention.active || mention.nodeId !== state.drawerNodeId || !(mention.options || []).length) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        state.commentMention = null;
+        render();
+        return;
+      }
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const delta = event.key === 'ArrowDown' ? 1 : -1;
+        const length = mention.options.length;
+        mention.selectedIndex = (mention.selectedIndex + delta + length) % length;
+        render();
+        return;
+      }
+      if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey && !event.shiftKey) {
+        event.preventDefault();
+        const member = mention.options[mention.selectedIndex] || mention.options[0];
+        if (member) selectMention(member.id);
+      }
+    }
+
+    function extractMentionIdsFromText(nodeId, text) {
+      const selected = state.commentMentionIds[nodeId] || [];
+      const ids = selected.filter(id => {
+        const member = state.memberById.get(id);
+        return member && text.includes(`@${member.name}`);
+      });
+      state.members.forEach(member => {
+        if (text.includes(`@${member.name}`) && !ids.includes(member.id)) {
+          ids.push(member.id);
+        }
+      });
+      return ids;
     }
 
     function moveNodeTo(nodeId, newParentId) {
@@ -948,7 +1151,7 @@
       const dayWidth = Number(right.dataset.dayWidth);
       const scaleStart = Number(right.dataset.startDay);
       const rowTop = Number(row.dataset.ganttRowTop) || 0;
-      const canvasRect = canvas.getBoundingClientRect();
+      const rightRect = right.getBoundingClientRect();
       const initialX = event.clientX;
       let moved = false;
       let preview = null;
@@ -959,8 +1162,8 @@
 
       const rangeFromClientX = clientX => {
         const maxX = Math.max(0, canvas.scrollWidth - 1);
-        const rawStart = Math.max(0, Math.min(initialX - canvasRect.left + right.scrollLeft, maxX));
-        const rawEnd = Math.max(0, Math.min(clientX - canvasRect.left + right.scrollLeft, maxX));
+        const rawStart = Math.max(0, Math.min(initialX - rightRect.left + right.scrollLeft, maxX));
+        const rawEnd = Math.max(0, Math.min(clientX - rightRect.left + right.scrollLeft, maxX));
         const startOffset = Math.floor(Math.min(rawStart, rawEnd) / dayWidth);
         const endOffset = Math.floor(Math.max(rawStart, rawEnd) / dayWidth);
         const startDay = scaleStart + startOffset;

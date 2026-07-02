@@ -188,6 +188,129 @@
       }[char]));
     }
 
+    function renderMarkdown(text, mentionIds = []) {
+      const source = String(text ?? '').split('\r\n').join('\n').split('\r').join('\n');
+      let html = '';
+      let lastIndex = 0;
+      const fenceRegex = new RegExp('^```[^\\n]*\\n?([\\s\\S]*?)(?:\\n```|$)', 'gm');
+      let match;
+      while ((match = fenceRegex.exec(source)) !== null) {
+        html += renderMarkdownTextBlock(source.slice(lastIndex, match.index), mentionIds);
+        html += '<pre class="code-block"><code>' + h(match[1] || '') + '</code></pre>';
+        lastIndex = fenceRegex.lastIndex;
+        if (match[0] === '') break;
+      }
+      html += renderMarkdownTextBlock(source.slice(lastIndex), mentionIds);
+      return html;
+    }
+
+    function renderMarkdownTextBlock(text, mentionIds) {
+      const lines = String(text || '').split('\n');
+      const stack = [];
+      const itemOpen = [];
+      let html = '';
+
+      function closeItem(level) {
+        if (itemOpen[level]) {
+          html += '</li>';
+          itemOpen[level] = false;
+        }
+      }
+
+      function closeLists(toLevel = 0) {
+        while (stack.length > toLevel) {
+          closeItem(stack.length - 1);
+          html += '</' + stack.pop() + '>';
+          itemOpen.pop();
+        }
+      }
+
+      lines.forEach((rawLine, index) => {
+        const match = rawLine.match(new RegExp('^(\\s{0,4})([-*]|\\d+\\.)\\s+(.+)$'));
+        if (!match) {
+          closeLists();
+          html += formatInlineMarkdown(h(rawLine), mentionIds);
+          if (index < lines.length - 1) html += '<br>';
+          return;
+        }
+        let level = match[1].length >= 2 ? 1 : 0;
+        if (level > 0 && !stack.length) level = 0;
+        if (level > stack.length) level = stack.length;
+        const type = new RegExp('^\\d+\\.').test(match[2]) ? 'ol' : 'ul';
+        closeLists(level + 1);
+        if (stack[level] !== type) {
+          closeLists(level);
+          html += '<' + type + '>';
+          stack.push(type);
+        } else {
+          closeItem(level);
+        }
+        html += '<li>' + formatInlineMarkdown(h(match[3]), mentionIds);
+        itemOpen[level] = true;
+      });
+      closeLists();
+      return html;
+    }
+
+    function formatInlineMarkdown(escaped, mentionIds) {
+      const placeholders = [];
+      const put = function (html) {
+        const token = '__MD_PLACEHOLDER_' + placeholders.length + '__';
+        placeholders.push({ token, html });
+        return token;
+      };
+      const tick = String.fromCharCode(96);
+      const inlineCodePattern = new RegExp(tick + '([^' + tick + '\\n]+)' + tick, 'g');
+      let value = escaped.replace(inlineCodePattern, function (_, code) {
+        return put('<code>' + code + '</code>');
+      });
+      value = value.replace(new RegExp('\\[([^\\]]+)\\]\\(([^)\\s]+)\\)', 'g'), function (full, label, url) {
+        const href = safeMarkdownHref(url);
+        if (!href) return full;
+        return put('<a href="' + h(href) + '" target="_blank" rel="noopener noreferrer">' + label + '</a>');
+      });
+      value = value.replace(new RegExp('~~(.+?)~~', 'g'), '<del>$1</del>');
+      value = value.replace(new RegExp('\\*\\*(.+?)\\*\\*', 'g'), '<strong>$1</strong>');
+      value = value.replace(new RegExp('(^|[^\\*])\\*([^*\\n]+)\\*', 'g'), '$1<em>$2</em>');
+      value = value.replace(new RegExp('https?://[^\\s<]+', 'g'), function (url) {
+        const trailing = trailingUrlPunctuation(url);
+        const core = trailing ? url.slice(0, -trailing.length) : url;
+        const href = safeMarkdownHref(core);
+        if (!href) return url;
+        return put('<a href="' + h(href) + '" target="_blank" rel="noopener noreferrer">' + core + '</a>' + trailing);
+      });
+      if (mentionIds && mentionIds.length) {
+        value = value.replace(new RegExp('(^|[\\s>　])(@[^\\s<]+)', 'g'), '$1<span class="mention-highlight">$2</span>');
+      }
+      placeholders.forEach(function (item) {
+        value = value.split(item.token).join(item.html);
+      });
+      return value;
+    }
+
+    function safeMarkdownHref(value) {
+      const href = String(value || '').split('&amp;').join('&').trim();
+      const lowerHref = href.toLowerCase();
+      if (!lowerHref.startsWith('http://') && !lowerHref.startsWith('https://')) return '';
+      try {
+        const url = new URL(href);
+        return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : '';
+      } catch (error) {
+        return '';
+      }
+    }
+
+    function trailingUrlPunctuation(url) {
+      const trailingChars = '),.。、';
+      let trailing = '';
+      for (let index = String(url || '').length - 1; index >= 0; index -= 1) {
+        const char = url.charAt(index);
+        if (!trailingChars.includes(char)) break;
+        trailing = char + trailing;
+      }
+      return trailing;
+    }
+
     function cssEscape(value) {
       if (window.CSS && CSS.escape) return CSS.escape(value);
       return String(value).replace(/"/g, '\\"');
@@ -320,6 +443,10 @@
     let renderTimer = null;
 
     function scheduleRender() {
+      if (state.textComposing) {
+        state.renderDeferred = true;
+        return;
+      }
       const active = document.activeElement;
       const restoreId = active && active.id === 'filterQuery' ? active.id : '';
       const restoreStart = restoreId ? active.selectionStart : null;

@@ -59,7 +59,8 @@ function addNode(payload) {
 
 function saveNode(payload) {
   payload = payload || {};
-  return withLock_(function () {
+  let statusNotification = null;
+  const result = withLock_(function () {
     requireSchemaExists_();
     const actor = requireCurrentMember_();
     const requestId = cleanString_(payload.requestId);
@@ -102,11 +103,29 @@ function saveNode(payload) {
     rows = readAll_();
     const writeIds = Object.keys(writeMap);
     const affectedIds = unique_(writeIds.concat(ancestorIdsForMany_(writeIds, activeNodes_(rows.nodes))));
+    if (statusChanged) {
+      try {
+        const afterNode = byId_(activeNodes_(rows.nodes), 'NodeId')[node.NodeId] || node;
+        statusNotification = buildStatusChangeNotification_(
+          afterNode,
+          rows.statusColumns.find(function (column) { return cleanString_(column.ColumnId) === beforeStatus; }),
+          rows.statusColumns.find(function (column) { return cleanString_(column.ColumnId) === cleanString_(afterNode.StatusColumnId); }),
+          actor,
+          rows
+        );
+      } catch (error) {
+        statusNotification = null;
+      }
+    }
     return makeMutationPayload_(rows, affectedIds, requestId, {
       rescheduledCount: rescheduleResult.shiftedIds.filter(function (id) { return id !== node.NodeId; }).length,
       statusChanged: statusChanged
     });
   });
+  if (statusNotification) {
+    postToSlack_(statusNotification);
+  }
+  return result;
 }
 
 function moveNode(payload) {

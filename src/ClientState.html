@@ -11,11 +11,14 @@
       commentCounts: {},
       currentMember: null,
       currentEmail: '',
+      unregistered: false,
+      joinPromptDismissed: false,
       spreadsheetId: '',
       rootId: '',
       view: 'kanban',
       filters: { query: '', parentId: '', assigneeId: '', priority: '', dateStart: '', dateEnd: '' },
       showGroupsInKanban: false,
+      kanbanMemberRailCollapsed: false,
       collapsed: new Set(),
       drawerNodeId: '',
       detailDraftNodeId: '',
@@ -29,6 +32,10 @@
       calendarView: null,
       comments: new Map(),
       commentsLoading: new Set(),
+      commentDrafts: {},
+      commentMentionIds: {},
+      commentReplyTo: null,
+      commentMention: null,
       ganttZoom: 'day',
       ganttScaleFactor: 1,
       ganttScrollLeft: 0,
@@ -40,6 +47,7 @@
       dragOverColumnId: '',
       columnDragId: '',
       ganttCreateDrag: null,
+      textComposing: false,
       renderDeferred: false,
       backgroundChains: new Map(),
       pendingMutationCount: 0,
@@ -61,6 +69,7 @@
     const LOCAL_CACHE_PREFIX = 'gasTaskManager.cache.v2';
     const LOCAL_CACHE_INDEX_KEY = 'gasTaskManager.cache.index.v2';
     const SYNC_INTERVAL_MS = 30000;
+    const SERVER_CALL_TIMEOUT_MS = 60000;
     const GANTT_ROW_HEIGHT = 40;
     const GANTT_SCALE_LEVELS = [0.75, 1, 1.25, 1.5, 2];
     const STATUS_COLOR_PRESETS = ['#98A098', '#2F6FDB', '#1E6F5C', '#B8862B', '#C24444', '#5B7A99', '#7C6EE6', '#D65C9F'];
@@ -87,7 +96,20 @@
       return `<svg class="svg-icon ${h(extraClass)}" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
     }
 
-    window.addEventListener('load', init);
+    let appInitStarted = false;
+
+    function startAppOnce() {
+      if (appInitStarted) return;
+      appInitStarted = true;
+      init();
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', startAppOnce, { once: true });
+    } else {
+      startAppOnce();
+    }
+    window.addEventListener('load', startAppOnce, { once: true });
     window.addEventListener('beforeunload', event => {
       if (!hasPendingMutations()) return;
       event.preventDefault();
