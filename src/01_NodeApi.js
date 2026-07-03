@@ -279,6 +279,7 @@ function applyNodePatch_(node, patch, rows) {
   const beforeDone = cleanString_(node.StatusColumnId) === doneColumnId;
   const active = activeNodes_(rows.nodes);
   const childIds = childrenMap_(active)[cleanString_(node.NodeId)] || [];
+  const isLeaf = !childIds.length;
   const normalizedProgress = hasProgressPatch ? normalizeManualProgress_(patch.progress, true) : null;
   const normalizedStatus = hasStatusPatch ? validateStatusId_(patch.statusColumnId, rows.statusColumns) : '';
 
@@ -325,15 +326,15 @@ function applyNodePatch_(node, patch, rows) {
   if (patch.includeInWbs !== undefined) {
     node.IncludeInWbs = normalizeIncludeInWbs_(patch.includeInWbs);
   }
-  if (hasProgressPatch) {
+  if (hasProgressPatch && isLeaf) {
     node.Progress = normalizedProgress === '' ? '' : normalizedProgress;
     if (normalizedProgress === 100) {
       node.StatusColumnId = doneColumnId;
     }
   }
-  if (cleanString_(node.StatusColumnId) === doneColumnId) {
+  if (isLeaf && cleanString_(node.StatusColumnId) === doneColumnId) {
     node.Progress = 100;
-  } else if (hasStatusPatch && beforeDone && !hasProgressPatch) {
+  } else if (isLeaf && hasStatusPatch && beforeDone && !hasProgressPatch) {
     node.Progress = 90;
   }
   if (patch.startDate !== undefined || patch.endDate !== undefined) {

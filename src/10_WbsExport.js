@@ -137,7 +137,7 @@ function exportWbs() {
   scriptProps.setProperty(WBS_EXPORT_GUARD_KEY, String(nowMs));
 
   try {
-    const rows = readAll_();
+    const rows = readAll_({ includeActivityLog: true });
     const documentProps = PropertiesService.getDocumentProperties();
     const nowIso = nowIso_();
     const createdAt = documentProps.getProperty('WBS_CREATED_AT') || nowIso;
@@ -489,6 +489,7 @@ function writeWbsSheet_(model) {
   sheet.clear();
   sheet.setConditionalFormatRules([]);
   sheet.getRange(1, 1, sheet.getMaxRows(), sheet.getMaxColumns()).clearDataValidations();
+  applyWbsPreValueFormats_(sheet, model, rowCount);
   sheet.getRange(1, 1, rowCount, colCount).setValues(model.values);
   sheet.getRange(1, 1, rowCount, colCount).setBackgrounds(model.backgrounds);
   sheet.getRange(1, 1, rowCount, colCount).setVerticalAlignment('middle').setWrap(false);
@@ -539,6 +540,35 @@ function writeWbsSheet_(model) {
   }
   sheet.getRange(1, 1, rowCount, colCount).setBorder(true, true, true, true, true, true, WBS_COLORS.border, SpreadsheetApp.BorderStyle.SOLID);
   SpreadsheetApp.flush();
+}
+
+function applyWbsPreValueFormats_(sheet, model, rowCount) {
+  const layout = model.layout;
+  const textRanges = [sheet.getRange(1, 1, rowCount, 1)];
+  if (layout.metaEndRow >= layout.metaStartRow) {
+    textRanges.push(sheet.getRange(layout.metaStartRow, 2, layout.metaEndRow - layout.metaStartRow + 1, 1));
+  }
+  if (layout.milestoneEndRow > layout.milestoneStartRow) {
+    textRanges.push(sheet.getRange(layout.milestoneStartRow + 1, 3, layout.milestoneEndRow - layout.milestoneStartRow, 1));
+  }
+  if (layout.meetingEndRow > layout.meetingStartRow) {
+    textRanges.push(sheet.getRange(layout.meetingStartRow + 1, 2, layout.meetingEndRow - layout.meetingStartRow, 2));
+  }
+  if (model.taskRows.length) {
+    const taskRows = model.taskRows.length;
+    const taskStart = layout.taskStartRow;
+    textRanges.push(sheet.getRange(taskStart, layout.taskNameStartCol, taskRows, layout.maxDepth));
+    textRanges.push(sheet.getRange(taskStart, layout.deliverableCol, taskRows, 1));
+    textRanges.push(sheet.getRange(taskStart, layout.noteCol, taskRows, 1));
+    textRanges.push(sheet.getRange(taskStart, layout.companyCol, taskRows, 1));
+    textRanges.push(sheet.getRange(taskStart, layout.assigneeCol, taskRows, 1));
+  }
+  textRanges.forEach(function (range) {
+    range.setNumberFormat('@');
+  });
+  if (model.dateColumns.length) {
+    sheet.getRange(layout.headerRow1, layout.ganttStartCol, 2, model.dateColumns.length).setNumberFormat('@');
+  }
 }
 
 function ensureWbsSheetSize_(sheet, rowCount, colCount) {

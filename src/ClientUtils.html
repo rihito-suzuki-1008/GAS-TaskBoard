@@ -36,6 +36,7 @@
     function applyLocalNodePatch(node, patch) {
       if (!node || !patch) return;
       const previousStatus = node.statusColumnId;
+      const isLeaf = !node.hasChildren;
       if (patch.name !== undefined) node.name = patch.name;
       if (patch.statusColumnId !== undefined) node.statusColumnId = patch.statusColumnId;
       if (patch.priority !== undefined) node.priority = patch.priority;
@@ -46,16 +47,16 @@
       if (patch.deliverable !== undefined) node.deliverable = patch.deliverable;
       if (patch.note !== undefined) node.note = patch.note;
       if (patch.includeInWbs !== undefined) node.includeInWbs = patch.includeInWbs !== false;
-      if (patch.progress !== undefined) node.manualProgress = normalizeProgressValue(patch.progress);
+      if (patch.progress !== undefined && isLeaf) node.manualProgress = normalizeProgressValue(patch.progress);
 
       const doneId = doneStatusColumnId();
-      if (patch.progress !== undefined && normalizeProgressValue(patch.progress) === 100) {
+      if (patch.progress !== undefined && isLeaf && normalizeProgressValue(patch.progress) === 100) {
         node.statusColumnId = doneId;
         node.manualProgress = 100;
       }
-      if (node.statusColumnId === doneId) {
+      if (isLeaf && node.statusColumnId === doneId) {
         node.manualProgress = 100;
-      } else if (patch.statusColumnId !== undefined && previousStatus === doneId && node.manualProgress === 100) {
+      } else if (isLeaf && patch.statusColumnId !== undefined && previousStatus === doneId && node.manualProgress === 100) {
         node.manualProgress = 90;
       }
     }
