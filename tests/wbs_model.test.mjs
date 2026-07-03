@@ -53,7 +53,7 @@ test('WBS numbering skips IncludeInWbs=false subtrees', () => {
   ]);
 });
 
-test('layout shifts management and gantt columns for deep trees', () => {
+test('template layout keeps management columns fixed and places deep task names', () => {
   const model = buildWbsModel_(baseRows(), {
     actorName: '佐藤',
     now: '2026-07-03T00:00:00.000Z',
@@ -61,10 +61,43 @@ test('layout shifts management and gantt columns for deep trees', () => {
     version: 1
   });
   assert.equal(model.layout.maxDepth, 4);
-  assert.equal(model.layout.deliverableCol, 6);
-  assert.equal(model.layout.doneCol, 17);
-  assert.equal(model.layout.ganttStartCol, 18);
-  assert.equal(wbsColumnLetter_(model.layout.ganttStartCol), 'R');
+  assert.equal(model.layout.taskNameStartCol, 2);
+  assert.equal(model.layout.taskNameEndCol, 5);
+  assert.equal(model.layout.taskDisplayCol, 6);
+  assert.equal(model.layout.deliverableCol, 7);
+  assert.equal(model.layout.doneCol, 18);
+  assert.equal(model.layout.ganttStartCol, 19);
+  assert.equal(model.layout.taskStartRow, 14);
+  assert.equal(wbsColumnLetter_(model.layout.ganttStartCol), 'S');
+  const deepest = model.taskRows.find(row => row.node.NodeId === 'c1a1');
+  assert.equal(model.values[deepest.sheetRow - 1][4], 'C-1-a-1');
+  assert.equal(model.values[model.layout.headerRow2 - 1][0], 'No.');
+  assert.equal(model.values[model.layout.headerRow2 - 1][5], 'タスク');
+  assert.equal(model.values[model.layout.headerRow2 - 1][17], '完了フラグ');
+});
+
+test('template places milestones and dated meetings on gantt rows', () => {
+  const rows = baseRows();
+  rows.milestones = [
+    { MilestoneId: 'ms1', Name: 'Kick Off', Date: '2026-07-05', SortOrder: 1000 }
+  ];
+  rows.meetings = [
+    { MeetingId: 'mt1', Name: '定例会', Schedule: '2026-07-06 毎週月曜', SortOrder: 1000 }
+  ];
+  const model = buildWbsModel_(rows, {
+    actorName: '佐藤',
+    now: '2026-07-03T00:00:00.000Z',
+    createdAt: '2026-07-03T00:00:00.000Z',
+    version: 1
+  });
+  const milestoneDateIndex = model.dateColumns.findIndex(date => date.date === '2026-07-05');
+  const meetingDateIndex = model.dateColumns.findIndex(date => date.date === '2026-07-06');
+  assert.notEqual(milestoneDateIndex, -1);
+  assert.notEqual(meetingDateIndex, -1);
+  assert.equal(model.values[model.layout.milestoneBodyStartRow - 1][model.layout.ganttStartCol + milestoneDateIndex - 1], 'Kick Off');
+  assert.equal(model.values[model.layout.milestoneBodyStartRow][model.layout.ganttStartCol + milestoneDateIndex - 1], '▼');
+  assert.equal(model.values[model.layout.meetingBodyStartRow - 1][2], '定例会 2026-07-06 毎週月曜');
+  assert.equal(model.values[model.layout.meetingBodyStartRow - 1][model.layout.ganttStartCol + meetingDateIndex - 1], '▼');
 });
 
 test('deriveActuals uses first activity and last done snapshot only for current 100%', () => {

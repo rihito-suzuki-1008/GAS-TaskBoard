@@ -175,7 +175,7 @@ function buildWbsModel_(rows, options) {
   const root = derivedState.root || nodes[0] || {};
   const visibleRows = filterWbsTree_(derivedState);
   const maxDepth = Math.max(3, visibleRows.reduce(function (max, row) { return Math.max(max, row.depth); }, 0));
-  const layout = buildWbsLayout_(maxDepth, milestones.length, meetings.length, visibleRows.length);
+  const layout = buildWbsLayout_(maxDepth, meetings.length, visibleRows.length);
   const dateRange = buildWbsDateRange_(visibleRows, derivedState.derived, options);
   layout.totalCols = layout.ganttStartCol + dateRange.dateColumns.length - 1;
   const actuals = deriveActuals_(logs, {
@@ -209,64 +209,66 @@ function buildWbsModel_(rows, options) {
     taskRows: visibleRows,
     dateColumns: dateRange.dateColumns,
     warning: dateRange.warning,
-    sectionRows: visibleRows.filter(function (row) { return row.depth === 1; }).map(function (row) { return row.sheetRow; })
+    sectionRows: visibleRows.filter(function (row) { return row.depth === 1; }).map(function (row) { return row.sheetRow; }),
+    normalRows: visibleRows.filter(function (row) { return row.depth !== 1; }).map(function (row) { return row.sheetRow; })
   };
 }
 
 var WBS_COLORS = {
   white: '#FFFFFF',
-  note: '#F3F5F2',
-  label: '#595959',
-  header: '#3F3F3F',
-  paleYellow: '#FFF2CC',
-  saturday: '#DDEBF7',
-  sunday: '#FCE4D6',
-  plan: '#D9EAD3',
-  section: '#404040',
-  border: '#B7B7B7',
-  completed: '#E7E6E6'
+  metaLabel: '#D9D9D9',
+  paleYellow: '#FFFFDD',
+  header: '#CCCCCC',
+  saturday: '#A4C2F4',
+  sunday: '#F4CCCC',
+  plan: '#B7E1CD',
+  section: '#666666',
+  completed: '#B7B7B7',
+  border: '#000000'
 };
 
-function buildWbsLayout_(maxDepth, milestoneCount, meetingCount, taskCount) {
+function buildWbsLayout_(maxDepth, meetingCount, taskCount) {
+  const noCol = 1;
   const taskNameStartCol = 2;
-  const metaStartCol = taskNameStartCol + maxDepth;
-  const deliverableCol = metaStartCol;
-  const noteCol = metaStartCol + 1;
-  const companyCol = metaStartCol + 2;
-  const assigneeCol = metaStartCol + 3;
-  const planStartCol = metaStartCol + 4;
-  const planEndCol = metaStartCol + 5;
-  const planDaysCol = metaStartCol + 6;
-  const actualStartCol = metaStartCol + 7;
-  const actualEndCol = metaStartCol + 8;
-  const actualDaysCol = metaStartCol + 9;
-  const progressCol = metaStartCol + 10;
-  const doneCol = metaStartCol + 11;
-  const ganttStartCol = metaStartCol + 12;
+  const indentDepth = 4;
+  const taskNameEndCol = taskNameStartCol + indentDepth - 1;
+  const taskDisplayCol = 6;
+  const deliverableCol = 7;
+  const noteCol = 8;
+  const companyCol = 9;
+  const assigneeCol = 10;
+  const planStartCol = 11;
+  const planEndCol = 12;
+  const planDaysCol = 13;
+  const actualStartCol = 14;
+  const actualEndCol = 15;
+  const actualDaysCol = 16;
+  const progressCol = 17;
+  const doneCol = 18;
+  const ganttStartCol = 19;
 
-  let row = 1;
-  const noteRow = row;
-  row += 1;
-  const metaStartRow = row;
-  row += 3;
-  const metaEndRow = row - 1;
-  const milestoneStartRow = row;
-  row += Math.max(1, milestoneCount) + 1;
-  const milestoneEndRow = row - 1;
-  const meetingStartRow = row;
-  row += Math.max(1, meetingCount) + 1;
-  const meetingEndRow = row - 1;
-  const headerRow1 = row;
-  row += 1;
-  const headerRow2 = row;
-  row += 1;
-  const taskStartRow = row;
+  const metaStartRow = 1;
+  const metaEndRow = 2;
+  const headerRow1 = 4;
+  const headerRow2 = 5;
+  const milestoneStartRow = 6;
+  const milestoneBodyStartRow = 7;
+  const milestoneBodyRows = 3;
+  const milestoneEndRow = milestoneBodyStartRow + milestoneBodyRows - 1;
+  const meetingStartRow = milestoneEndRow + 1;
+  const meetingBodyStartRow = meetingStartRow + 1;
+  const meetingBodyRows = Math.max(3, meetingCount);
+  const meetingEndRow = meetingBodyStartRow + meetingBodyRows - 1;
+  const taskStartRow = meetingEndRow + 1;
   const taskEndRow = taskCount ? taskStartRow + taskCount - 1 : taskStartRow;
 
   return {
+    noCol: noCol,
     maxDepth: maxDepth,
+    indentDepth: indentDepth,
     taskNameStartCol: taskNameStartCol,
-    metaStartCol: metaStartCol,
+    taskNameEndCol: taskNameEndCol,
+    taskDisplayCol: taskDisplayCol,
     deliverableCol: deliverableCol,
     noteCol: noteCol,
     companyCol: companyCol,
@@ -280,18 +282,22 @@ function buildWbsLayout_(maxDepth, milestoneCount, meetingCount, taskCount) {
     progressCol: progressCol,
     doneCol: doneCol,
     ganttStartCol: ganttStartCol,
-    noteRow: noteRow,
     metaStartRow: metaStartRow,
     metaEndRow: metaEndRow,
     milestoneStartRow: milestoneStartRow,
+    milestoneBodyStartRow: milestoneBodyStartRow,
+    milestoneBodyRows: milestoneBodyRows,
     milestoneEndRow: milestoneEndRow,
     meetingStartRow: meetingStartRow,
+    meetingBodyStartRow: meetingBodyStartRow,
+    meetingBodyRows: meetingBodyRows,
     meetingEndRow: meetingEndRow,
     headerRow1: headerRow1,
     headerRow2: headerRow2,
     taskStartRow: taskStartRow,
     taskEndRow: taskEndRow,
-    totalRows: Math.max(taskEndRow, headerRow2),
+    leftEndCol: doneCol,
+    totalRows: Math.max(taskEndRow, meetingEndRow),
     totalCols: ganttStartCol + 1
   };
 }
@@ -329,7 +335,6 @@ function buildWbsDateRange_(visibleRows, derived, options) {
 function fillWbsStaticSections_(values, backgrounds, layout, context) {
   const rootName = wbsClean_(wbsGet_(context.root, 'Name', 'name')) || 'プロジェクト';
   const nowDate = wbsClean_(context.options.now).slice(0, 10) || wbsTodayText_();
-  const createdDate = wbsClean_(context.options.createdAt).slice(0, 10) || nowDate;
   const plannedStarts = [];
   const plannedEnds = [];
   context.visibleRows.forEach(function (row) {
@@ -342,73 +347,81 @@ function fillWbsStaticSections_(values, backgrounds, layout, context) {
   const minStart = plannedStarts.length ? plannedStarts.sort()[0] : '';
   const maxEnd = plannedEnds.length ? plannedEnds.sort()[plannedEnds.length - 1] : '';
 
-  wbsSetRowBackground_(backgrounds, layout.noteRow, 1, layout.totalCols, WBS_COLORS.note);
-  values[layout.noteRow - 1][0] = 'このシートはアプリから自動生成されます。手編集は次回出力で上書きされます';
+  values[0][2] = 'プロジェクト名';
+  values[0][6] = rootName;
+  values[0][10] = '開始日';
+  values[0][11] = '終了日';
+  values[0][13] = '更新日';
+  values[1][10] = minStart ? wbsDateValue_(minStart) : '';
+  values[1][11] = maxEnd ? wbsDateValue_(maxEnd) : '';
+  values[1][13] = wbsDateValue_(nowDate);
+  wbsSetBackgrounds_(backgrounds, 1, 3, 1, 4, WBS_COLORS.metaLabel);
+  wbsSetBackgrounds_(backgrounds, 1, 7, 1, 2, WBS_COLORS.paleYellow);
+  wbsSetBackgrounds_(backgrounds, 1, 11, 1, 2, WBS_COLORS.metaLabel);
+  wbsSetBackgrounds_(backgrounds, 1, 14, 1, 1, WBS_COLORS.metaLabel);
+  wbsSetBackgrounds_(backgrounds, 2, 11, 1, 2, WBS_COLORS.paleYellow);
+  wbsSetBackgrounds_(backgrounds, 2, 14, 1, 1, WBS_COLORS.paleYellow);
 
-  const meta = [
-    ['プロジェクト名', rootName, '開始日', minStart ? wbsDateValue_(minStart) : '', '終了日', maxEnd ? wbsDateValue_(maxEnd) : ''],
-    ['作成者', wbsClean_(context.options.actorName), '初回作成日', wbsDateValue_(createdDate), '更新日', wbsDateValue_(nowDate)],
-    ['バージョン', 'v' + String(context.options.version || 1), 'タスク数', context.visibleRows.length, '', '']
-  ];
-  meta.forEach(function (rowValues, rowIndex) {
-    const sheetRow = layout.metaStartRow + rowIndex;
-    for (let pair = 0; pair < 3; pair += 1) {
-      const labelCol = 1 + pair * 2;
-      const valueCol = labelCol + 1;
-      values[sheetRow - 1][labelCol - 1] = rowValues[pair * 2];
-      values[sheetRow - 1][valueCol - 1] = rowValues[pair * 2 + 1];
-      backgrounds[sheetRow - 1][labelCol - 1] = WBS_COLORS.label;
-      backgrounds[sheetRow - 1][valueCol - 1] = WBS_COLORS.paleYellow;
-    }
-  });
-
-  values[layout.milestoneStartRow - 1][0] = 'マイルストーン';
-  wbsSetRowBackground_(backgrounds, layout.milestoneStartRow, 1, layout.totalCols, WBS_COLORS.header);
-  context.milestones.forEach(function (milestone, index) {
-    const sheetRow = layout.milestoneStartRow + index + 1;
-    const name = wbsClean_(wbsGet_(milestone, 'Name', 'name'));
-    const date = wbsClean_(wbsGet_(milestone, 'Date', 'date'));
-    values[sheetRow - 1][0] = name;
-    values[sheetRow - 1][1] = date ? wbsDateValue_(date) : '';
-    values[sheetRow - 1][2] = wbsClean_(wbsGet_(milestone, 'Note', 'note'));
-    const dateIndex = wbsDateIndex_(context.dateRange, date);
-    if (dateIndex >= 0) {
-      values[sheetRow - 1][layout.ganttStartCol - 1 + dateIndex] = '▼ ' + name;
-    }
-  });
-  if (!context.milestones.length) {
-    values[layout.milestoneStartRow][0] = 'なし';
+  wbsSetBackgrounds_(backgrounds, layout.headerRow1, 1, 2, layout.totalCols, WBS_COLORS.header);
+  values[layout.headerRow1 - 1][layout.companyCol - 1] = 'タスクオーナー';
+  values[layout.headerRow1 - 1][layout.planEndCol - 1] = '計画';
+  values[layout.headerRow1 - 1][layout.actualEndCol - 1] = '実績';
+  values[layout.headerRow2 - 1][0] = 'No.';
+  for (let depth = 0; depth < layout.indentDepth - 1; depth += 1) {
+    values[layout.headerRow2 - 1][layout.taskNameStartCol + depth - 1] = depth + 1;
   }
-
-  values[layout.meetingStartRow - 1][0] = '会議体';
-  wbsSetRowBackground_(backgrounds, layout.meetingStartRow, 1, layout.totalCols, WBS_COLORS.header);
-  context.meetings.forEach(function (meeting, index) {
-    const sheetRow = layout.meetingStartRow + index + 1;
-    values[sheetRow - 1][0] = wbsClean_(wbsGet_(meeting, 'Name', 'name'));
-    values[sheetRow - 1][1] = wbsClean_(wbsGet_(meeting, 'Schedule', 'schedule'));
-    values[sheetRow - 1][2] = wbsClean_(wbsGet_(meeting, 'Note', 'note'));
-  });
-  if (!context.meetings.length) {
-    values[layout.meetingStartRow][0] = 'なし';
-  }
-
-  const leftHeaders = ['WBS番号'];
-  for (let i = 0; i < layout.maxDepth; i += 1) {
-    leftHeaders.push('タスク名' + (i + 1));
-  }
-  leftHeaders.push('成果物', '備考', '会社名', '責任者', '計画開始日', '計画終了日', '計画日数', '実績開始日', '実績終了日', '実績日数', '進捗率', '完了フラグ');
-  leftHeaders.forEach(function (label, index) {
-    values[layout.headerRow1 - 1][index] = label;
-  });
+  values[layout.headerRow2 - 1][layout.taskDisplayCol - 1] = 'タスク';
+  values[layout.headerRow2 - 1][layout.deliverableCol - 1] = '成果物';
+  values[layout.headerRow2 - 1][layout.noteCol - 1] = '備考';
+  values[layout.headerRow2 - 1][layout.companyCol - 1] = '会社名';
+  values[layout.headerRow2 - 1][layout.assigneeCol - 1] = '責任者';
+  values[layout.headerRow2 - 1][layout.planStartCol - 1] = '開始';
+  values[layout.headerRow2 - 1][layout.planEndCol - 1] = '終了';
+  values[layout.headerRow2 - 1][layout.planDaysCol - 1] = '日数';
+  values[layout.headerRow2 - 1][layout.actualStartCol - 1] = '開始';
+  values[layout.headerRow2 - 1][layout.actualEndCol - 1] = '終了';
+  values[layout.headerRow2 - 1][layout.actualDaysCol - 1] = '日数';
+  values[layout.headerRow2 - 1][layout.progressCol - 1] = '進捗率';
+  values[layout.headerRow2 - 1][layout.doneCol - 1] = '完了フラグ';
   context.dateRange.dateColumns.forEach(function (date, index) {
     const col = layout.ganttStartCol + index;
-    values[layout.headerRow1 - 1][col - 1] = wbsFormatMonthDay_(date.date);
+    values[layout.headerRow1 - 1][col - 1] = wbsDateValue_(date.date);
     values[layout.headerRow2 - 1][col - 1] = wbsWeekdayLabel_(date.dow);
-    backgrounds[layout.headerRow1 - 1][col - 1] = WBS_COLORS.header;
-    backgrounds[layout.headerRow2 - 1][col - 1] = WBS_COLORS.header;
   });
-  wbsSetRowBackground_(backgrounds, layout.headerRow1, 1, layout.totalCols, WBS_COLORS.header);
-  wbsSetRowBackground_(backgrounds, layout.headerRow2, 1, layout.totalCols, WBS_COLORS.header);
+
+  values[layout.milestoneStartRow - 1][1] = 'マイルストーン';
+  wbsSetRowBackground_(backgrounds, layout.milestoneStartRow, 1, layout.totalCols, WBS_COLORS.section);
+  wbsSetBackgrounds_(backgrounds, layout.milestoneBodyStartRow, 1, layout.milestoneBodyRows, layout.leftEndCol, WBS_COLORS.paleYellow);
+  context.milestones.forEach(function (milestone) {
+    const name = wbsClean_(wbsGet_(milestone, 'Name', 'name'));
+    const date = wbsClean_(wbsGet_(milestone, 'Date', 'date'));
+    const dateIndex = wbsDateIndex_(context.dateRange, date);
+    if (dateIndex >= 0) {
+      const col = layout.ganttStartCol + dateIndex;
+      wbsAppendCellText_(values, layout.milestoneBodyStartRow, col, name);
+      wbsAppendCellText_(values, layout.milestoneBodyStartRow + 1, col, '▼');
+    }
+  });
+
+  values[layout.meetingStartRow - 1][1] = '会議体';
+  wbsSetRowBackground_(backgrounds, layout.meetingStartRow, 1, layout.totalCols, WBS_COLORS.section);
+  wbsSetBackgrounds_(backgrounds, layout.meetingBodyStartRow, 1, layout.meetingBodyRows, layout.leftEndCol, WBS_COLORS.paleYellow);
+  context.meetings.forEach(function (meeting, index) {
+    const sheetRow = layout.meetingBodyStartRow + index;
+    const name = wbsClean_(wbsGet_(meeting, 'Name', 'name'));
+    const schedule = wbsClean_(wbsGet_(meeting, 'Schedule', 'schedule'));
+    const note = wbsClean_(wbsGet_(meeting, 'Note', 'note'));
+    values[sheetRow - 1][2] = [name, schedule].filter(Boolean).join(' ');
+    wbsMeetingMarkerDates_(meeting).forEach(function (date) {
+      const dateIndex = wbsDateIndex_(context.dateRange, date);
+      if (dateIndex >= 0) {
+        wbsAppendCellText_(values, sheetRow, layout.ganttStartCol + dateIndex, '▼');
+      }
+    });
+    if (!schedule && note) {
+      values[sheetRow - 1][2] = [name, note].filter(Boolean).join(' ');
+    }
+  });
 }
 
 function fillWbsTasks_(values, backgrounds, layout, context) {
@@ -444,36 +457,35 @@ function fillWbsTasks_(values, backgrounds, layout, context) {
     });
 
     matrixRow[0] = row.number;
-    matrixRow[layout.taskNameStartCol + row.depth - 2] = wbsClean_(wbsGet_(node, 'Name', 'name'));
+    matrixRow[wbsTaskNameCol_(layout, row.depth) - 1] = wbsClean_(wbsGet_(node, 'Name', 'name'));
+    if (row.depth === 1) {
+      wbsSetRowBackground_(backgrounds, sheetRow, 1, layout.totalCols, WBS_COLORS.section);
+      return;
+    }
+
+    wbsSetBackgrounds_(backgrounds, sheetRow, 1, 1, layout.planDaysCol - 1, WBS_COLORS.paleYellow);
+    wbsSetBackgrounds_(backgrounds, sheetRow, layout.actualStartCol, 1, 2, WBS_COLORS.paleYellow);
+    backgrounds[sheetRow - 1][layout.planDaysCol - 1] = WBS_COLORS.header;
+    backgrounds[sheetRow - 1][layout.actualDaysCol - 1] = WBS_COLORS.header;
+    backgrounds[sheetRow - 1][layout.doneCol - 1] = WBS_COLORS.header;
     matrixRow[layout.deliverableCol - 1] = wbsClean_(wbsGet_(node, 'Deliverable', 'deliverable'));
     matrixRow[layout.noteCol - 1] = wbsClean_(wbsGet_(node, 'Note', 'note'));
     matrixRow[layout.companyCol - 1] = companies.join('・');
     matrixRow[layout.assigneeCol - 1] = assigneeNames.join('・');
     matrixRow[layout.planStartCol - 1] = plan.startDate ? wbsDateValue_(plan.startDate) : '';
     matrixRow[layout.planEndCol - 1] = plan.endDate ? wbsDateValue_(plan.endDate) : '';
-    matrixRow[layout.planDaysCol - 1] = plan.startDate && plan.endDate ? wbsDaysFormula_(sheetRow, layout.planStartCol, layout.planEndCol) : '';
+    matrixRow[layout.planDaysCol - 1] = wbsDaysFormula_(sheetRow, layout.planStartCol, layout.planEndCol);
     matrixRow[layout.actualStartCol - 1] = actual.startDate ? wbsDateValue_(actual.startDate) : '';
     matrixRow[layout.actualEndCol - 1] = actual.endDate ? wbsDateValue_(actual.endDate) : '';
-    matrixRow[layout.actualDaysCol - 1] = actual.startDate && actual.endDate ? wbsDaysFormula_(sheetRow, layout.actualStartCol, layout.actualEndCol) : '';
+    matrixRow[layout.actualDaysCol - 1] = wbsDaysFormula_(sheetRow, layout.actualStartCol, layout.actualEndCol);
     matrixRow[layout.progressCol - 1] = (Number(context.progressByNodeId[nodeId]) || 0) / 100;
-    matrixRow[layout.doneCol - 1] = '=IF(' + wbsA1_(sheetRow, layout.progressCol) + '=1,"完了","")';
+    matrixRow[layout.doneCol - 1] = '=IF(' + wbsA1_(sheetRow, layout.progressCol) + '=1, "完了", "")';
 
-    context.dateRange.dateColumns.forEach(function (date, dateIndex) {
+    context.dateRange.dateColumns.forEach(function (_date, dateIndex) {
       const col = layout.ganttStartCol + dateIndex;
-      bgRow[col - 1] = date.dow === 0 ? WBS_COLORS.sunday : date.dow === 6 ? WBS_COLORS.saturday : WBS_COLORS.white;
-      if (plan.startDate && plan.endDate && date.date >= plan.startDate && date.date <= plan.endDate) {
-        bgRow[col - 1] = WBS_COLORS.plan;
-      }
-      if (actual.startDate && actual.endDate && date.date >= actual.startDate && date.date <= actual.endDate) {
-        matrixRow[col - 1] = '★';
-      }
+      bgRow[col - 1] = WBS_COLORS.white;
+      matrixRow[col - 1] = wbsActualMarkerFormula_(sheetRow, col, layout.actualStartCol, layout.actualEndCol);
     });
-
-    if (row.depth === 1) {
-      for (let col = 0; col < bgRow.length; col += 1) {
-        bgRow[col] = WBS_COLORS.section;
-      }
-    }
   });
 }
 
@@ -492,21 +504,7 @@ function writeWbsSheet_(model) {
   applyWbsPreValueFormats_(sheet, model, rowCount);
   sheet.getRange(1, 1, rowCount, colCount).setValues(model.values);
   sheet.getRange(1, 1, rowCount, colCount).setBackgrounds(model.backgrounds);
-  sheet.getRange(1, 1, rowCount, colCount).setVerticalAlignment('middle').setWrap(false);
-  sheet.getRange(model.layout.noteRow, 1, 1, colCount).setFontColor('#666666').setFontStyle('italic');
-  sheet.getRange(model.layout.metaStartRow, 1, model.layout.metaEndRow - model.layout.metaStartRow + 1, 6).setFontWeight('bold');
-  sheet.getRangeList(['A', 'C', 'E'].map(function (col) {
-    return col + model.layout.metaStartRow + ':' + col + model.layout.metaEndRow;
-  })).setFontColor('#FFFFFF');
-  sheet.getRange(model.layout.milestoneStartRow, 1, 1, colCount).setFontColor('#FFFFFF').setFontWeight('bold');
-  sheet.getRange(model.layout.meetingStartRow, 1, 1, colCount).setFontColor('#FFFFFF').setFontWeight('bold');
-  sheet.getRange(model.layout.headerRow1, 1, 2, colCount).setFontColor('#FFFFFF').setFontWeight('bold').setHorizontalAlignment('center');
-
-  if (model.sectionRows.length) {
-    sheet.getRangeList(model.sectionRows.map(function (row) {
-      return 'A' + row + ':' + wbsColumnLetter_(colCount) + row;
-    })).setFontColor('#FFFFFF').setFontWeight('bold');
-  }
+  applyWbsTemplateFormats_(sheet, model, rowCount, colCount);
 
   if (model.taskRows.length) {
     const start = model.layout.taskStartRow;
@@ -514,61 +512,130 @@ function writeWbsSheet_(model) {
     [model.layout.planStartCol, model.layout.planEndCol, model.layout.actualStartCol, model.layout.actualEndCol].forEach(function (col) {
       sheet.getRange(start, col, rows, 1).setNumberFormat('yyyy/mm/dd');
     });
-    sheet.getRange(start, model.layout.progressCol, rows, 1).setNumberFormat('0%');
+    sheet.getRange(start, model.layout.progressCol, rows, 1).setNumberFormat('General');
     const validation = SpreadsheetApp.newDataValidation()
       .requireValueInList(['0', '0.15', '0.3', '0.45', '0.6', '0.75', '0.9', '1'], true)
       .setAllowInvalid(false)
       .build();
     sheet.getRange(start, model.layout.progressCol, rows, 1).setDataValidation(validation);
-    const doneCol = wbsColumnLetter_(model.layout.doneCol);
-    const tableRange = sheet.getRange(start, 1, rows, model.layout.doneCol);
-    const rule = SpreadsheetApp.newConditionalFormatRule()
-      .whenFormulaSatisfied('=$' + doneCol + start + '="完了"')
-      .setBackground(WBS_COLORS.completed)
-      .setRanges([tableRange])
-      .build();
-    sheet.setConditionalFormatRules([rule]);
   }
 
-  sheet.setFrozenRows(model.layout.headerRow2);
-  sheet.setFrozenColumns(model.layout.doneCol);
-  sheet.setColumnWidth(1, 78);
-  sheet.setColumnWidths(model.layout.taskNameStartCol, model.layout.maxDepth, 150);
-  sheet.setColumnWidths(model.layout.metaStartCol, 12, 96);
-  if (model.dateColumns.length) {
-    sheet.setColumnWidths(model.layout.ganttStartCol, model.dateColumns.length, 24);
-  }
-  sheet.getRange(1, 1, rowCount, colCount).setBorder(true, true, true, true, true, true, WBS_COLORS.border, SpreadsheetApp.BorderStyle.SOLID);
+  sheet.setConditionalFormatRules(buildWbsConditionalFormatRules_(sheet, model));
   SpreadsheetApp.flush();
 }
 
 function applyWbsPreValueFormats_(sheet, model, rowCount) {
   const layout = model.layout;
-  const textRanges = [sheet.getRange(1, 1, rowCount, 1)];
-  if (layout.metaEndRow >= layout.metaStartRow) {
-    textRanges.push(sheet.getRange(layout.metaStartRow, 2, layout.metaEndRow - layout.metaStartRow + 1, 1));
-  }
-  if (layout.milestoneEndRow > layout.milestoneStartRow) {
-    textRanges.push(sheet.getRange(layout.milestoneStartRow + 1, 3, layout.milestoneEndRow - layout.milestoneStartRow, 1));
-  }
-  if (layout.meetingEndRow > layout.meetingStartRow) {
-    textRanges.push(sheet.getRange(layout.meetingStartRow + 1, 2, layout.meetingEndRow - layout.meetingStartRow, 2));
-  }
-  if (model.taskRows.length) {
-    const taskRows = model.taskRows.length;
-    const taskStart = layout.taskStartRow;
-    textRanges.push(sheet.getRange(taskStart, layout.taskNameStartCol, taskRows, layout.maxDepth));
-    textRanges.push(sheet.getRange(taskStart, layout.deliverableCol, taskRows, 1));
-    textRanges.push(sheet.getRange(taskStart, layout.noteCol, taskRows, 1));
-    textRanges.push(sheet.getRange(taskStart, layout.companyCol, taskRows, 1));
-    textRanges.push(sheet.getRange(taskStart, layout.assigneeCol, taskRows, 1));
-  }
+  const textRanges = [
+    sheet.getRange(1, layout.noCol, rowCount, 1),
+    sheet.getRange(1, layout.taskNameStartCol, rowCount, layout.taskDisplayCol - layout.taskNameStartCol + 1),
+    sheet.getRange(1, layout.deliverableCol, rowCount, 2),
+    sheet.getRange(1, layout.companyCol, rowCount, 2)
+  ];
   textRanges.forEach(function (range) {
     range.setNumberFormat('@');
   });
   if (model.dateColumns.length) {
-    sheet.getRange(layout.headerRow1, layout.ganttStartCol, 2, model.dateColumns.length).setNumberFormat('@');
+    sheet.getRange(layout.milestoneBodyStartRow, layout.ganttStartCol, layout.milestoneBodyRows, model.dateColumns.length).setNumberFormat('@');
+    sheet.getRange(layout.meetingBodyStartRow, layout.ganttStartCol, layout.meetingBodyRows, model.dateColumns.length).setNumberFormat('@');
   }
+}
+
+function applyWbsTemplateFormats_(sheet, model, rowCount, colCount) {
+  const layout = model.layout;
+  sheet.setHiddenGridlines(true);
+  sheet.setFrozenRows(0);
+  sheet.setFrozenColumns(layout.taskDisplayCol);
+  sheet.getRange(1, 1, rowCount, colCount)
+    .setFontFamily('Arial')
+    .setFontColor('#000000')
+    .setVerticalAlignment('middle')
+    .setWrap(false);
+
+  sheet.getRange(layout.headerRow1, 1, 2, colCount)
+    .setFontWeight('bold')
+    .setHorizontalAlignment('center');
+  sheet.getRange(layout.headerRow1, layout.ganttStartCol, 1, model.dateColumns.length || 1).setNumberFormat('m/d');
+  sheet.getRange(2, layout.planStartCol, 1, 2).setNumberFormat('yyyy/mm/dd');
+  sheet.getRange(2, layout.actualStartCol, 1, 1).setNumberFormat('yyyy/mm/dd');
+
+  const sectionRows = [layout.milestoneStartRow, layout.meetingStartRow].concat(model.sectionRows || []);
+  if (sectionRows.length) {
+    sheet.getRangeList(sectionRows.map(function (row) {
+      return 'A' + row + ':' + wbsColumnLetter_(colCount) + row;
+    })).setFontColor('#FFFFFF').setFontWeight('bold');
+  }
+
+  sheet.getRange(1, 1, rowCount, layout.leftEndCol)
+    .setBorder(true, true, true, true, true, true, WBS_COLORS.border, SpreadsheetApp.BorderStyle.SOLID);
+  if (model.dateColumns.length) {
+    sheet.getRange(layout.headerRow1, layout.ganttStartCol, 2, model.dateColumns.length)
+      .setBorder(true, true, true, true, true, true, WBS_COLORS.border, SpreadsheetApp.BorderStyle.SOLID);
+  }
+
+  sheet.setColumnWidth(1, 45);
+  sheet.setColumnWidths(layout.taskNameStartCol, layout.indentDepth, 18);
+  sheet.setColumnWidth(layout.taskDisplayCol, 149);
+  sheet.setColumnWidth(layout.deliverableCol, 150);
+  sheet.setColumnWidth(layout.noteCol, 87);
+  sheet.setColumnWidth(layout.companyCol, 46);
+  sheet.setColumnWidth(layout.assigneeCol, 63);
+  sheet.setColumnWidths(layout.planStartCol, 2, 75);
+  sheet.setColumnWidth(layout.planDaysCol, 31);
+  sheet.setColumnWidths(layout.actualStartCol, 2, 75);
+  sheet.setColumnWidth(layout.actualDaysCol, 31);
+  sheet.setColumnWidth(layout.progressCol, 75);
+  sheet.setColumnWidth(layout.doneCol, 70);
+  if (model.dateColumns.length) {
+    sheet.setColumnWidths(layout.ganttStartCol, model.dateColumns.length, 36);
+  }
+}
+
+function buildWbsConditionalFormatRules_(sheet, model) {
+  const layout = model.layout;
+  const rules = [];
+  if (model.taskRows.length) {
+    const taskRows = model.taskRows.length;
+    const taskGanttRange = sheet.getRange(layout.taskStartRow, layout.ganttStartCol, taskRows, model.dateColumns.length || 1);
+    const leftTaskRange = sheet.getRange(layout.taskStartRow, 1, taskRows, layout.leftEndCol);
+    rules.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=AND(S$4>=$K' + layout.taskStartRow + '-0.0001,S$4<=$L' + layout.taskStartRow + '+0.0001)')
+      .setBackground(WBS_COLORS.plan)
+      .setRanges([taskGanttRange])
+      .build());
+    rules.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=$R' + layout.taskStartRow + '="完了"')
+      .setBackground(WBS_COLORS.completed)
+      .setRanges([leftTaskRange])
+      .build());
+  }
+  if (model.dateColumns.length) {
+    const headerRange = sheet.getRange(layout.headerRow1, layout.ganttStartCol, 2, model.dateColumns.length);
+    const bodyRange = sheet.getRange(layout.milestoneBodyStartRow, layout.ganttStartCol, layout.totalRows - layout.milestoneBodyStartRow + 1, model.dateColumns.length);
+    rules.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=WEEKDAY(S$4)=1')
+      .setBackground(WBS_COLORS.sunday)
+      .setRanges([headerRange])
+      .build());
+    rules.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=WEEKDAY(S$4)=7')
+      .setBackground(WBS_COLORS.saturday)
+      .setRanges([headerRange])
+      .build());
+    rules.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=WEEKDAY(S$4)=1')
+      .setBackground(WBS_COLORS.sunday)
+      .setFontColor(WBS_COLORS.sunday)
+      .setRanges([bodyRange])
+      .build());
+    rules.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=WEEKDAY(S$4)=7')
+      .setBackground(WBS_COLORS.saturday)
+      .setFontColor(WBS_COLORS.saturday)
+      .setRanges([bodyRange])
+      .build());
+  }
+  return rules;
 }
 
 function ensureWbsSheetSize_(sheet, rowCount, colCount) {
@@ -748,6 +815,12 @@ function wbsSetRowBackground_(backgrounds, row, startCol, colCount, color) {
   }
 }
 
+function wbsSetBackgrounds_(backgrounds, startRow, startCol, rowCount, colCount, color) {
+  for (let row = startRow; row < startRow + rowCount; row += 1) {
+    wbsSetRowBackground_(backgrounds, row, startCol, colCount, color);
+  }
+}
+
 function wbsEmptyMatrix_(rows, cols, value) {
   const matrix = [];
   for (let row = 0; row < rows; row += 1) {
@@ -763,7 +836,46 @@ function wbsEmptyMatrix_(rows, cols, value) {
 function wbsDaysFormula_(row, startCol, endCol) {
   const start = wbsA1_(row, startCol);
   const end = wbsA1_(row, endCol);
-  return '=IF(AND(' + start + '<>"",' + end + '<>""),' + end + '-' + start + '+1,"")';
+  return '=IF(AND(' + start + '<>"", ' + end + '<>""), ' + end + '-' + start + '+1, "")';
+}
+
+function wbsActualMarkerFormula_(row, dateCol, actualStartCol, actualEndCol) {
+  const dateCell = wbsColumnLetter_(dateCol) + '$4';
+  const startCell = '$' + wbsColumnLetter_(actualStartCol) + row;
+  const endCell = '$' + wbsColumnLetter_(actualEndCol) + row;
+  return '=IF(AND(' + dateCell + '<>"", ' + dateCell + '>=' + startCell + '-0.0001, ' + dateCell + '<=' + endCell + '+0.0001), "★", "")';
+}
+
+function wbsTaskNameCol_(layout, depth) {
+  const safeDepth = Math.max(1, Math.min(Number(depth) || 1, layout.indentDepth));
+  return layout.taskNameStartCol + safeDepth - 1;
+}
+
+function wbsAppendCellText_(values, row, col, text) {
+  const value = wbsClean_(text);
+  if (!value) {
+    return;
+  }
+  const current = wbsClean_(values[row - 1][col - 1]);
+  values[row - 1][col - 1] = current ? current + ' / ' + value : value;
+}
+
+function wbsMeetingMarkerDates_(meeting) {
+  const text = [
+    wbsGet_(meeting, 'Name', 'name'),
+    wbsGet_(meeting, 'Schedule', 'schedule'),
+    wbsGet_(meeting, 'Note', 'note')
+  ].map(wbsClean_).join(' ');
+  const result = [];
+  const seen = {};
+  const matches = text.match(/\d{4}-\d{2}-\d{2}/g) || [];
+  matches.forEach(function (dateText) {
+    if (wbsIsValidDate_(dateText) && !seen[dateText]) {
+      seen[dateText] = true;
+      result.push(dateText);
+    }
+  });
+  return result;
 }
 
 function wbsA1_(row, col) {
