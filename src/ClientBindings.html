@@ -281,6 +281,8 @@
           render();
         });
       });
+      const resizer = document.querySelector('[data-gantt-resizer]');
+      if (resizer) resizer.addEventListener('pointerdown', startGanttTreeResize);
       const right = document.querySelector('.gantt-right');
       const left = document.querySelector('.gantt-left');
       const leftBody = document.querySelector('.gantt-left-body');

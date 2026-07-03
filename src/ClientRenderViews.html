@@ -254,6 +254,13 @@
           })}
           ${renderDropdown({
             scope: 'filters',
+            field: 'assigneeId',
+            placeholder: '全担当',
+            selected: state.filters.assigneeId,
+            options: [{ value: '', label: '全担当' }].concat(state.members.map(member => ({ value: member.id, label: member.name, avatar: member })))
+          })}
+          ${renderDropdown({
+            scope: 'filters',
             field: 'priority',
             placeholder: '全優先度',
             selected: state.filters.priority,
@@ -490,6 +497,7 @@
       const today = localTodayDay();
       const todayLeft = (today - scale.startDay) * scale.dayWidth;
       const activeScale = nearestGanttScaleFactor(state.ganttScaleFactor);
+      const treeWidth = clampGanttTreeWidth(state.ganttTreeWidth);
       return `
         <section class="view">
           <div class="view-toolbar">
@@ -509,19 +517,20 @@
             <button class="button primary compact" type="button" data-action="create-child-shell" data-parent-id="${h(state.rootId)}">${icon('plus')}タスクを追加</button>
             <button class="button secondary compact" type="button" data-action="gantt-jump-today">今日へ</button>
           </div>
-          <div class="gantt-frame">
+          <div class="gantt-frame" style="--gantt-tree-width:${treeWidth}px">
             <div class="gantt-left">
               <div class="gantt-axis-left"><span>タスク名</span><span>日付範囲</span><span>日数</span></div>
               <div class="gantt-left-body" style="height:${height}px">
                 ${displayRows.map(renderGanttTreeRow).join('')}
               </div>
             </div>
+            <button class="gantt-resizer" type="button" data-gantt-resizer title="左側の幅を調整" aria-label="左側の幅を調整"></button>
             <div class="gantt-right" data-day-width="${scale.dayWidth}" data-start-day="${scale.startDay}">
               <div class="gantt-axis" style="width:${scale.width}px">${renderAxisTicks(scale)}</div>
               <div class="gantt-canvas" style="width:${scale.width}px;height:${height}px;--day-width:${scale.dayWidth}px">
                 ${renderWeekendBands(scale, height)}
                 ${renderGanttInteractionRows(displayRows, emptyLaneCount)}
-                ${todayLeft >= 0 && todayLeft <= scale.width ? `<div class="today-line" style="left:${todayLeft}px"></div>` : ''}
+                ${todayLeft >= 0 && todayLeft <= scale.width ? `<div class="today-column" style="left:${todayLeft}px;width:${scale.dayWidth}px;height:${height}px"></div>` : ''}
                 ${renderGanttArrows(displayRows, scale, height)}
                 ${displayRows.map((node, index) => renderGanttBar(node, index, scale)).join('')}
               </div>
@@ -604,16 +613,23 @@
         }
         return ticks.join('');
       }
-      const step = 7;
-      let day = alignTickDay(scale.startDay, step);
+      const step = state.ganttZoom === 'day' ? ganttDayTickStep(scale.dayWidth) : 7;
+      const tickClass = state.ganttZoom === 'day'
+        ? step === 1
+          ? ' daily'
+          : step < 7
+            ? ' interval'
+            : ''
+        : '';
+      let day = step === 7 ? alignTickDay(scale.startDay, step) : scale.startDay;
       if (day > scale.startDay) {
         const widthDays = day - scale.startDay;
-        ticks.push(`<div class="axis-tick" style="width:${widthDays * scale.dayWidth}px">${h(formatTickLabel(scale.startDay))}</div>`);
+        ticks.push(`<div class="axis-tick${tickClass}" style="width:${widthDays * scale.dayWidth}px">${h(formatTickLabel(scale.startDay))}</div>`);
       }
       for (; day <= scale.endDay; day += step) {
         const visibleEnd = Math.min(day + step, scale.endDay + 1);
         const widthDays = Math.max(1, visibleEnd - day);
-        ticks.push(`<div class="axis-tick" style="width:${widthDays * scale.dayWidth}px">${h(formatTickLabel(day))}</div>`);
+        ticks.push(`<div class="axis-tick${tickClass}" style="width:${widthDays * scale.dayWidth}px">${h(formatTickLabel(day))}</div>`);
       }
       return ticks.join('');
     }
@@ -638,10 +654,10 @@
       const left = (dateToDay(start) - scale.startDay) * scale.dayWidth;
       const width = Math.max(24, (dateToDay(end) - dateToDay(start) + 1) * scale.dayWidth);
       const canDrag = Boolean(node.startDate && node.endDate);
+      const barColor = statusColor(node.statusColumnId);
       return `
-        <div class="gantt-bar ${state.shellNodeId === node.id ? 'shell-node-bar' : ''} ${canDrag ? '' : 'readonly'}" data-gantt-bar="${h(node.id)}" style="left:${left}px;top:${index * GANTT_ROW_HEIGHT + 8}px;width:${width}px">
+        <div class="gantt-bar ${state.shellNodeId === node.id ? 'shell-node-bar' : ''} ${canDrag ? '' : 'readonly'}" data-gantt-bar="${h(node.id)}" style="left:${left}px;top:${index * GANTT_ROW_HEIGHT + 8}px;width:${width}px;--gantt-status-color:${h(barColor)}">
           ${state.savingNodeIds.has(node.id) ? '<span class="saving-dot"></span>' : ''}
-          <span class="gantt-progress" style="width:${Math.max(0, Math.min(100, node.progress))}%"></span>
           ${canDrag ? '<span class="bar-handle left" data-handle="left"></span>' : ''}
           <span class="gantt-label">${h(node.name || '新しいタスク')}</span>
           ${canDrag ? '<span class="bar-handle right" data-handle="right"></span>' : ''}

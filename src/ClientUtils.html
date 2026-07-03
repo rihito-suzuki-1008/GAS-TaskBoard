@@ -81,6 +81,14 @@
       return `${Math.round(value * 100)}%`;
     }
 
+    function ganttDayTickStep(dayWidth) {
+      const width = Number(dayWidth) || 0;
+      if (width >= 34) return 1;
+      if (width >= 24) return 2;
+      if (width >= 18) return 3;
+      return 7;
+    }
+
     function compareSortOrder(a, b) {
       return (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0) || String(a.name || '').localeCompare(String(b.name || ''), 'ja');
     }
@@ -322,15 +330,29 @@
 
     function defaultStatusColor(column = {}) {
       const name = String(column.name || '').toLowerCase();
-      if (column.isDoneColumn || name.includes('完了') || name.includes('done')) return '#1E6F5C';
-      if (name.includes('進行') || name.includes('progress') || name.includes('doing')) return '#2F6FDB';
-      if (name.includes('未着手') || name.includes('todo') || name.includes('to do')) return '#98A098';
-      return '#667066';
+      if (column.isDoneColumn || name.includes('完了') || name.includes('done')) return '#CFE8DE';
+      if (name.includes('進行') || name.includes('progress') || name.includes('doing')) return '#CFE0F5';
+      if (name.includes('未着手') || name.includes('todo') || name.includes('to do')) return '#DCE5DE';
+      return '#DDE3DF';
+    }
+
+    function statusColor(statusColumnId) {
+      const column = state.statusById.get(statusColumnId);
+      if (!column) return defaultStatusColor({ name: statusName(statusColumnId) });
+      return normalizeHex(column.color) || defaultStatusColor(column);
     }
 
     function normalizeHex(value) {
       const color = String(value || '').trim();
       return /^#[0-9a-fA-F]{6}$/.test(color) ? color.toUpperCase() : '';
+    }
+
+    function clampGanttTreeWidth(value, frame) {
+      const numeric = Number(value) || 520;
+      const frameWidth = frame ? frame.getBoundingClientRect().width : 0;
+      const maxForFrame = frameWidth ? Math.max(GANTT_TREE_WIDTH_MIN, frameWidth - GANTT_RIGHT_MIN_WIDTH) : GANTT_TREE_WIDTH_MAX;
+      const max = Math.min(GANTT_TREE_WIDTH_MAX, maxForFrame);
+      return Math.round(Math.max(GANTT_TREE_WIDTH_MIN, Math.min(max, numeric)));
     }
 
     function nodeHasDependency(nodeId) {

@@ -75,21 +75,21 @@ function setupProject(payload) {
       Name: '未着手',
       SortOrder: 1000,
       IsDoneColumn: false,
-      Color: '#98A098'
+      Color: '#DCE5DE'
     });
     appendObject_(SHEET.STATUS_COLUMNS, {
       ColumnId: statusDoing,
       Name: '進行中',
       SortOrder: 2000,
       IsDoneColumn: false,
-      Color: '#2F6FDB'
+      Color: '#CFE0F5'
     });
     appendObject_(SHEET.STATUS_COLUMNS, {
       ColumnId: statusDone,
       Name: '完了',
       SortOrder: 3000,
       IsDoneColumn: true,
-      Color: '#1E6F5C'
+      Color: '#CFE8DE'
     });
     appendObject_(SHEET.NODES, {
       NodeId: rootId,

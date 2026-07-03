@@ -129,15 +129,15 @@ function normalizeStatusColor_(value, name, isDoneColumn) {
 function defaultStatusColor_(name, isDoneColumn) {
   const text = cleanString_(name).toLowerCase();
   if (isDoneColumn || text.indexOf('完了') !== -1 || text.indexOf('done') !== -1) {
-    return '#1E6F5C';
+    return '#CFE8DE';
   }
   if (text.indexOf('進行') !== -1 || text.indexOf('progress') !== -1 || text.indexOf('doing') !== -1) {
-    return '#2F6FDB';
+    return '#CFE0F5';
   }
   if (text.indexOf('未着手') !== -1 || text.indexOf('todo') !== -1 || text.indexOf('to do') !== -1) {
-    return '#98A098';
+    return '#DCE5DE';
   }
-  return '#667066';
+  return '#DDE3DF';
 }
 
 function ensureExactlyOneDone_(columns) {

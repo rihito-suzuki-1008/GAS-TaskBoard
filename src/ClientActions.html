@@ -1132,6 +1132,49 @@
       });
     }
 
+    function startGanttTreeResize(event) {
+      if (event.button !== 0 || event.isPrimary === false) return;
+      const handle = event.currentTarget;
+      const frame = handle.closest('.gantt-frame');
+      if (!frame) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const startX = event.clientX;
+      const startWidth = clampGanttTreeWidth(state.ganttTreeWidth, frame);
+      frame.classList.add('resizing');
+      handle.setPointerCapture(event.pointerId);
+
+      const applyWidth = clientX => {
+        const next = clampGanttTreeWidth(startWidth + clientX - startX, frame);
+        state.ganttTreeWidth = next;
+        frame.style.setProperty('--gantt-tree-width', `${next}px`);
+      };
+      const onMove = moveEvent => {
+        moveEvent.preventDefault();
+        applyWidth(moveEvent.clientX);
+      };
+      const cleanup = () => {
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+        document.removeEventListener('keydown', onKeyDown);
+        frame.classList.remove('resizing');
+      };
+      const onUp = upEvent => {
+        if (upEvent) applyWidth(upEvent.clientX);
+        cleanup();
+      };
+      const onKeyDown = keyEvent => {
+        if (keyEvent.key !== 'Escape') return;
+        state.ganttTreeWidth = startWidth;
+        frame.style.setProperty('--gantt-tree-width', `${startWidth}px`);
+        cleanup();
+      };
+
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+      document.addEventListener('keydown', onKeyDown);
+    }
+
     function startGanttCreateDrag(event) {
       if (!state.currentMember || state.creatingShell || state.ganttCreateDrag) return;
       if (event.button !== 0 || event.isPrimary === false) return;
