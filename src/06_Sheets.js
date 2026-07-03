@@ -8,7 +8,10 @@ function readAll_() {
     members: readObjects_(SHEET.MEMBERS),
     statusColumns: readObjects_(SHEET.STATUS_COLUMNS),
     dependencies: readObjects_(SHEET.DEPENDENCIES),
-    comments: readObjects_(SHEET.COMMENTS)
+    comments: readObjects_(SHEET.COMMENTS),
+    activityLog: readObjects_(SHEET.ACTIVITY_LOG),
+    milestones: readObjects_(SHEET.MILESTONES),
+    meetings: readObjects_(SHEET.MEETINGS)
   };
 }
 

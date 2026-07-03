@@ -250,6 +250,23 @@
       font-weight: var(--weight-medium);
     }
 
+    .field-hint {
+      color: var(--color-text-tertiary);
+      font-size: var(--text-xs);
+    }
+
+    .readonly-field {
+      min-height: 38px;
+      display: flex;
+      align-items: center;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      background: var(--color-canvas);
+      color: var(--color-text-secondary);
+      padding: var(--space-2) var(--space-3);
+      font-family: var(--font-mono);
+    }
+
     .field-grid {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -493,6 +510,10 @@
 
     .switch input {
       accent-color: var(--color-accent);
+    }
+
+    .wbs-switch {
+      min-height: 38px;
     }
 
     .dropdown {
@@ -756,6 +777,17 @@
       cursor: pointer;
     }
 
+    .settings-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--space-1);
+      padding: var(--space-1);
+      margin-bottom: var(--space-4);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      background: var(--color-canvas);
+    }
+
     .chip-list {
       min-width: 0;
       display: inline-flex;
@@ -776,6 +808,11 @@
       padding: 0 var(--space-2);
       font-size: var(--text-xs);
       white-space: nowrap;
+    }
+
+    .wbs-out-chip {
+      color: var(--color-text-tertiary);
+      background: var(--color-surface);
     }
 
     .status-chip {

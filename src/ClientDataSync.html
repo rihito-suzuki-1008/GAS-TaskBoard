@@ -134,6 +134,8 @@
       state.members = (data.members || []).slice();
       state.statusColumns = (data.statusColumns || []).slice().sort(compareSortOrder);
       state.dependencies = (data.dependencies || []).slice();
+      state.milestones = (data.milestones || []).slice().sort(compareSortOrder);
+      state.meetings = (data.meetings || []).slice().sort(compareSortOrder);
       state.commentCounts = data.commentCounts || {};
       state.currentMember = data.currentMember || null;
       state.currentEmail = data.currentEmail || '';
@@ -165,6 +167,8 @@
         members: state.members,
         statusColumns: state.statusColumns,
         dependencies: state.dependencies,
+        milestones: state.milestones,
+        meetings: state.meetings,
         commentCounts: state.commentCounts,
         unregistered: state.unregistered
       };
@@ -264,6 +268,8 @@
       state.memberById = new Map(state.members.map(member => [member.id, member]));
       state.statusColumns.sort(compareSortOrder);
       state.statusById = new Map(state.statusColumns.map(column => [column.id, column]));
+      state.milestones.sort(compareSortOrder);
+      state.meetings.sort(compareSortOrder);
       state.currentMember = state.members.find(member => member.email === state.currentEmail) || null;
       recomputeClientDerived();
     }
@@ -301,6 +307,8 @@
       }
       if (Array.isArray(result.statusColumns)) state.statusColumns = result.statusColumns.slice();
       if (Array.isArray(result.dependencies)) state.dependencies = result.dependencies.slice();
+      if (Array.isArray(result.milestones)) state.milestones = result.milestones.slice();
+      if (Array.isArray(result.meetings)) state.meetings = result.meetings.slice();
       if (result.comment) {
         const comments = state.comments.get(result.comment.nodeId) || [];
         const index = comments.findIndex(comment => comment.id === result.comment.id);
@@ -389,7 +397,8 @@
         const childIds = children.get(nodeId) || [];
         if (!node) return 0;
         if (!childIds.length) {
-          const value = node.statusColumnId === doneColumnId ? 100 : 0;
+          const manual = normalizeProgressValue(node.manualProgress);
+          const value = node.statusColumnId === doneColumnId ? 100 : manual === null ? 0 : manual;
           progressMemo.set(nodeId, value);
           return value;
         }

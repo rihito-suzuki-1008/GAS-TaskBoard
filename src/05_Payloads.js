@@ -19,6 +19,8 @@ function makeFullPayload_(rows) {
     members: rows.members.map(clientMember_),
     statusColumns: rows.statusColumns.map(clientStatusColumn_).sort(compareSortOrder_),
     dependencies: clientDependencies_(rows),
+    milestones: rows.milestones.map(clientMilestone_).sort(compareSortOrder_),
+    meetings: rows.meetings.map(clientMeeting_).sort(compareSortOrder_),
     commentCounts: commentCounts_(rows),
     unregistered: !currentMember
   };
@@ -74,6 +76,10 @@ function clientNode_(node, derived) {
     startDate: cleanString_(node.StartDate),
     endDate: cleanString_(node.EndDate),
     description: cleanString_(node.Description),
+    deliverable: cleanString_(node.Deliverable),
+    note: cleanString_(node.Note),
+    manualProgress: validManualProgress_(node.Progress),
+    includeInWbs: normalizeIncludeInWbs_(node.IncludeInWbs),
     sortOrder: Number(node.SortOrder) || 0,
     createdAt: cleanString_(node.CreatedAt),
     updatedAt: cleanString_(node.UpdatedAt),
@@ -91,7 +97,8 @@ function clientMember_(member) {
     id: cleanString_(member.MemberId),
     name: cleanString_(member.Name),
     email: normalizeEmail_(member.Email),
-    color: normalizeColor_(member.Color) || '#1E6F5C'
+    color: normalizeColor_(member.Color) || '#1E6F5C',
+    company: cleanString_(member.Company)
   };
 }
 
@@ -120,6 +127,26 @@ function clientDependencies_(rows) {
     });
 }
 
+function clientMilestone_(milestone) {
+  return {
+    id: cleanString_(milestone.MilestoneId),
+    name: cleanString_(milestone.Name),
+    date: cleanString_(milestone.Date),
+    note: cleanString_(milestone.Note),
+    sortOrder: Number(milestone.SortOrder) || 0
+  };
+}
+
+function clientMeeting_(meeting) {
+  return {
+    id: cleanString_(meeting.MeetingId),
+    name: cleanString_(meeting.Name),
+    schedule: cleanString_(meeting.Schedule),
+    note: cleanString_(meeting.Note),
+    sortOrder: Number(meeting.SortOrder) || 0
+  };
+}
+
 function clientComment_(comment) {
   return {
     id: cleanString_(comment.CommentId),
@@ -136,8 +163,7 @@ function clientComment_(comment) {
 function computeDerived_(activeNodes, statusColumns) {
   const children = childrenMap_(activeNodes);
   const nodesById = byId_(activeNodes, 'NodeId');
-  const doneColumn = statusColumns.find(function (c) { return isTrue_(c.IsDoneColumn); }) || statusColumns[0] || {};
-  const doneColumnId = cleanString_(doneColumn.ColumnId);
+  const doneColumnId = doneStatusColumnId_(statusColumns);
   const progressMemo = {};
   const boundsMemo = {};
 
@@ -151,7 +177,7 @@ function computeDerived_(activeNodes, statusColumns) {
       return 0;
     }
     if (!childIds.length) {
-      progressMemo[id] = cleanString_(node.StatusColumnId) === doneColumnId ? 100 : 0;
+      progressMemo[id] = effectiveLeafProgress_(node, doneColumnId);
       return progressMemo[id];
     }
     const sum = childIds.reduce(function (acc, childId) { return acc + progressOf(childId); }, 0);

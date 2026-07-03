@@ -85,6 +85,10 @@
         startDate: config.startDate || '',
         endDate: config.endDate || '',
         description: config.description || '',
+        deliverable: config.deliverable || '',
+        note: config.note || '',
+        manualProgress: config.manualProgress === undefined ? null : config.manualProgress,
+        includeInWbs: config.includeInWbs !== false,
         sortOrder: config.sortOrder !== undefined ? config.sortOrder : nextLocalNodeSortOrder(config.parentId),
         createdAt: now,
         updatedAt: '',
@@ -273,7 +277,7 @@
     function openMembersDialog() {
       state.dialog = {
         type: 'members',
-        draft: { memberId: '', name: '', email: '', color: defaultMemberColor() }
+        draft: { memberId: '', name: '', email: '', company: '', color: defaultMemberColor() }
       };
       render();
     }
@@ -345,20 +349,22 @@
         id: memberId,
         name: cleanText(draft.name),
         email: normalizeClientEmail(draft.email),
-        color: normalizeHex(draft.color) || defaultMemberColor()
+        color: normalizeHex(draft.color) || defaultMemberColor(),
+        company: cleanText(draft.company)
       };
       queueBackgroundMutation('members', 'upsertMember', {
         memberId: draft.memberId,
         clientMemberId: draft.memberId ? '' : memberId,
         name: draft.name,
         email: draft.email,
+        company: draft.company,
         color: draft.color
       }, () => {
         const index = state.members.findIndex(member => member.id === memberId);
         if (index === -1) state.members.push(optimisticMember);
         else state.members[index] = optimisticMember;
         if (state.dialog && state.dialog.type === 'members') {
-          state.dialog.draft = { memberId: '', name: '', email: '', color: defaultMemberColor() };
+          state.dialog.draft = { memberId: '', name: '', email: '', company: '', color: defaultMemberColor() };
         }
       }, () => {
         state.members = previousMembers;
@@ -372,6 +378,7 @@
         memberId: member.id,
         name: member.name,
         email: member.email,
+        company: member.company || '',
         color: member.color || defaultMemberColor()
       };
       render();
@@ -379,7 +386,7 @@
 
     function clearMemberDraft() {
       if (!state.dialog || state.dialog.type !== 'members') return;
-      state.dialog.draft = { memberId: '', name: '', email: '', color: defaultMemberColor() };
+      state.dialog.draft = { memberId: '', name: '', email: '', company: '', color: defaultMemberColor() };
       render();
     }
 
@@ -422,6 +429,203 @@
         state.members = previousMembers;
         state.nodes = previousNodes;
       });
+    }
+
+    function openProjectSettingsDialog(tab = state.projectSettingsTab || 'milestones') {
+      state.projectSettingsTab = tab === 'meetings' ? 'meetings' : 'milestones';
+      state.dialog = {
+        type: 'projectSettings',
+        draft: defaultProjectSettingsDraft(state.projectSettingsTab)
+      };
+      render();
+    }
+
+    function defaultProjectSettingsDraft(tab) {
+      return tab === 'meetings'
+        ? { meetingId: '', name: '', schedule: '', note: '' }
+        : { milestoneId: '', name: '', date: '', note: '' };
+    }
+
+    function switchProjectSettingsTab(tab) {
+      if (!state.dialog || state.dialog.type !== 'projectSettings') return;
+      state.projectSettingsTab = tab === 'meetings' ? 'meetings' : 'milestones';
+      state.dialog.draft = defaultProjectSettingsDraft(state.projectSettingsTab);
+      render();
+    }
+
+    function editMilestoneDraft(milestoneId) {
+      const milestone = state.milestones.find(item => item.id === milestoneId);
+      if (!milestone || !state.dialog || state.dialog.type !== 'projectSettings') return;
+      state.projectSettingsTab = 'milestones';
+      state.dialog.draft = {
+        milestoneId: milestone.id,
+        name: milestone.name,
+        date: milestone.date,
+        note: milestone.note || ''
+      };
+      render();
+    }
+
+    function editMeetingDraft(meetingId) {
+      const meeting = state.meetings.find(item => item.id === meetingId);
+      if (!meeting || !state.dialog || state.dialog.type !== 'projectSettings') return;
+      state.projectSettingsTab = 'meetings';
+      state.dialog.draft = {
+        meetingId: meeting.id,
+        name: meeting.name,
+        schedule: meeting.schedule || '',
+        note: meeting.note || ''
+      };
+      render();
+    }
+
+    function clearProjectSettingsDraft() {
+      if (!state.dialog || state.dialog.type !== 'projectSettings') return;
+      state.dialog.draft = defaultProjectSettingsDraft(state.projectSettingsTab);
+      render();
+    }
+
+    function saveProjectSettingsDraft() {
+      const dialog = state.dialog;
+      if (!dialog || dialog.type !== 'projectSettings') return;
+      if (state.projectSettingsTab === 'meetings') {
+        return saveMeetingFromDialog();
+      }
+      return saveMilestoneFromDialog();
+    }
+
+    function saveMilestoneFromDialog() {
+      const draft = { ...state.dialog.draft };
+      if (!cleanText(draft.name) || !draft.date) {
+        showToast('名称と日付を入力', 'error');
+        return;
+      }
+      const previous = cloneValue(state.milestones);
+      const milestoneId = draft.milestoneId || newClientId('milestone');
+      const optimistic = {
+        id: milestoneId,
+        name: cleanText(draft.name),
+        date: draft.date,
+        note: cleanText(draft.note),
+        sortOrder: draft.milestoneId ? (state.milestones.find(item => item.id === draft.milestoneId) || {}).sortOrder || 0 : nextLocalSortOrder(state.milestones)
+      };
+      queueBackgroundMutation('milestones', 'upsertMilestone', {
+        milestoneId: draft.milestoneId,
+        clientMilestoneId: draft.milestoneId ? '' : milestoneId,
+        name: draft.name,
+        date: draft.date,
+        note: draft.note,
+        sortOrder: optimistic.sortOrder
+      }, () => {
+        const index = state.milestones.findIndex(item => item.id === milestoneId);
+        if (index === -1) state.milestones.push(optimistic);
+        else state.milestones[index] = optimistic;
+        clearProjectSettingsDraft();
+      }, () => {
+        state.milestones = previous;
+      });
+    }
+
+    function saveMeetingFromDialog() {
+      const draft = { ...state.dialog.draft };
+      if (!cleanText(draft.name)) {
+        showToast('名称を入力', 'error');
+        return;
+      }
+      const previous = cloneValue(state.meetings);
+      const meetingId = draft.meetingId || newClientId('meeting');
+      const optimistic = {
+        id: meetingId,
+        name: cleanText(draft.name),
+        schedule: cleanText(draft.schedule),
+        note: cleanText(draft.note),
+        sortOrder: draft.meetingId ? (state.meetings.find(item => item.id === draft.meetingId) || {}).sortOrder || 0 : nextLocalSortOrder(state.meetings)
+      };
+      queueBackgroundMutation('meetings', 'upsertMeeting', {
+        meetingId: draft.meetingId,
+        clientMeetingId: draft.meetingId ? '' : meetingId,
+        name: draft.name,
+        schedule: draft.schedule,
+        note: draft.note,
+        sortOrder: optimistic.sortOrder
+      }, () => {
+        const index = state.meetings.findIndex(item => item.id === meetingId);
+        if (index === -1) state.meetings.push(optimistic);
+        else state.meetings[index] = optimistic;
+        clearProjectSettingsDraft();
+      }, () => {
+        state.meetings = previous;
+      });
+    }
+
+    function confirmMilestoneDelete(milestoneId) {
+      const milestone = state.milestones.find(item => item.id === milestoneId);
+      if (!milestone) return;
+      state.dialog = { type: 'confirmMilestoneDelete', milestoneId, name: milestone.name };
+      render();
+    }
+
+    function confirmMeetingDelete(meetingId) {
+      const meeting = state.meetings.find(item => item.id === meetingId);
+      if (!meeting) return;
+      state.dialog = { type: 'confirmMeetingDelete', meetingId, name: meeting.name };
+      render();
+    }
+
+    function deleteMilestoneConfirmed() {
+      const milestoneId = state.dialog && state.dialog.milestoneId;
+      if (!milestoneId) return;
+      const previous = cloneValue(state.milestones);
+      closeDialog(false);
+      queueBackgroundMutation('milestones', 'deleteMilestone', { milestoneId }, () => {
+        state.milestones = state.milestones.filter(item => item.id !== milestoneId);
+      }, () => {
+        state.milestones = previous;
+      });
+    }
+
+    function deleteMeetingConfirmed() {
+      const meetingId = state.dialog && state.dialog.meetingId;
+      if (!meetingId) return;
+      const previous = cloneValue(state.meetings);
+      closeDialog(false);
+      queueBackgroundMutation('meetings', 'deleteMeeting', { meetingId }, () => {
+        state.meetings = state.meetings.filter(item => item.id !== meetingId);
+      }, () => {
+        state.meetings = previous;
+      });
+    }
+
+    function confirmExportWbs() {
+      state.dialog = { type: 'confirmExportWbs' };
+      render();
+    }
+
+    async function exportWbsNow() {
+      if (hasPendingMutations()) {
+        showToast('未同期の変更があります。同期完了後に実行してください', 'warning');
+        return;
+      }
+      const dialog = state.dialog;
+      if (dialog) {
+        if (dialog.submitting) return;
+        dialog.submitting = true;
+      }
+      state.exportWbsSubmitting = true;
+      render();
+      try {
+        const result = await serverCall('exportWbs');
+        state.exportWbsSubmitting = false;
+        state.dialog = null;
+        showToast('WBSシートを更新しました', 'success');
+        if (result && result.warning) showToast(result.warning, 'warning');
+        render();
+      } catch (error) {
+        state.exportWbsSubmitting = false;
+        if (dialog) dialog.submitting = false;
+        showToast(error.message, 'error');
+        render();
+      }
     }
 
     function openNode(nodeId, options = {}) {
@@ -562,15 +766,7 @@
         optimisticApply: () => {
           const target = state.nodesById.get(nodeId);
           if (!target) return;
-          Object.assign(target, {
-            name: patch.name,
-            statusColumnId: patch.statusColumnId,
-            priority: patch.priority,
-            assigneeIds: patch.assigneeIds.slice(),
-            startDate: patch.startDate,
-            endDate: patch.endDate,
-            description: patch.description
-          });
+          applyLocalNodePatch(target, patch);
         }
       };
     }
@@ -601,7 +797,11 @@
         assigneeIds: (node.assigneeIds || []).slice(),
         startDate: node.startDate || '',
         endDate: node.endDate || '',
-        description: node.description || ''
+        description: node.description || '',
+        deliverable: node.deliverable || '',
+        note: node.note || '',
+        progress: normalizeProgressValue(node.manualProgress) === null ? 0 : normalizeProgressValue(node.manualProgress),
+        includeInWbs: node.includeInWbs !== false
       };
     }
 
@@ -613,7 +813,11 @@
         assigneeIds: (draft.assigneeIds || []).slice(),
         startDate: draft.startDate || '',
         endDate: draft.endDate || '',
-        description: draft.description || ''
+        description: draft.description || '',
+        deliverable: draft.deliverable || '',
+        note: draft.note || '',
+        progress: normalizeProgressValue(draft.progress) === null ? 0 : normalizeProgressValue(draft.progress),
+        includeInWbs: draft.includeInWbs !== false
       };
     }
 
@@ -625,7 +829,11 @@
         assigneeIds: snapshot.assigneeIds.slice(),
         startDate: snapshot.startDate,
         endDate: snapshot.endDate,
-        description: snapshot.description
+        description: snapshot.description,
+        deliverable: snapshot.deliverable,
+        note: snapshot.note,
+        progress: snapshot.progress,
+        includeInWbs: snapshot.includeInWbs
       };
     }
 
@@ -636,6 +844,10 @@
         && a.startDate === b.startDate
         && a.endDate === b.endDate
         && a.description === b.description
+        && a.deliverable === b.deliverable
+        && a.note === b.note
+        && a.progress === b.progress
+        && a.includeInWbs === b.includeInWbs
         && a.assigneeIds.join(',') === b.assigneeIds.join(',');
     }
 
@@ -659,6 +871,10 @@
         startDate: node.startDate,
         endDate: node.endDate,
         description: node.description,
+        deliverable: node.deliverable || '',
+        note: node.note || '',
+        progress: normalizeProgressValue(node.manualProgress) === null ? 0 : normalizeProgressValue(node.manualProgress),
+        includeInWbs: node.includeInWbs !== false,
         dependency: { predecessorId: '', successorId: '' }
       };
     }
@@ -695,8 +911,14 @@
         assigneeIds: draft.assigneeIds,
         startDate: draft.startDate,
         endDate: draft.endDate,
-        description: draft.description
+        description: draft.description,
+        deliverable: draft.deliverable,
+        note: draft.note,
+        includeInWbs: draft.includeInWbs !== false
       };
+      if (node.isLeaf) {
+        patch.progress = normalizeProgressValue(draft.progress) === null ? 0 : normalizeProgressValue(draft.progress);
+      }
       const wasShell = state.shellNodeId === node.id;
       const parentId = node.parentId || state.rootId;
       const reopenDraft = wasShell ? { ...patch, assigneeIds: patch.assigneeIds.slice() } : null;
@@ -709,15 +931,7 @@
         state.focusDetailName = false;
       }
       return saveNodePatch(node.id, patch, () => {
-        Object.assign(node, {
-          name: patch.name,
-          statusColumnId: patch.statusColumnId,
-          priority: patch.priority,
-          assigneeIds: patch.assigneeIds.slice(),
-          startDate: patch.startDate,
-          endDate: patch.endDate,
-          description: patch.description
-        });
+        applyLocalNodePatch(node, patch);
       }, {
         baseUpdatedAt: wasShell ? undefined : draft.baseUpdatedAt,
         skipBaseUpdatedAt: wasShell,
@@ -746,6 +960,10 @@
             startDate: reopenDraft.startDate,
             endDate: reopenDraft.endDate,
             description: reopenDraft.description,
+            deliverable: reopenDraft.deliverable,
+            note: reopenDraft.note,
+            progress: reopenDraft.progress,
+            includeInWbs: reopenDraft.includeInWbs,
             dependency: { predecessorId: '', successorId: '' }
           };
           state.shellNodeId = node.id;

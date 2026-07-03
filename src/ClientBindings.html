@@ -200,7 +200,7 @@
           const node = state.nodesById.get(nodeId);
           if (node && node.statusColumnId !== columnId) {
             saveNodePatch(nodeId, { statusColumnId: columnId }, () => {
-              node.statusColumnId = columnId;
+              applyLocalNodePatch(node, { statusColumnId: columnId });
             });
           } else {
             render();
@@ -361,6 +361,18 @@
         return;
       }
       if (action === 'members') return openMembersDialog();
+      if (action === 'project-settings') return openProjectSettingsDialog();
+      if (action === 'project-settings-tab') return switchProjectSettingsTab(event.currentTarget.dataset.tab);
+      if (action === 'save-project-setting') return saveProjectSettingsDraft();
+      if (action === 'clear-project-setting') return clearProjectSettingsDraft();
+      if (action === 'edit-milestone') return editMilestoneDraft(event.currentTarget.dataset.milestoneId);
+      if (action === 'edit-meeting') return editMeetingDraft(event.currentTarget.dataset.meetingId);
+      if (action === 'confirm-milestone-delete') return confirmMilestoneDelete(event.currentTarget.dataset.milestoneId);
+      if (action === 'confirm-meeting-delete') return confirmMeetingDelete(event.currentTarget.dataset.meetingId);
+      if (action === 'delete-milestone') return deleteMilestoneConfirmed();
+      if (action === 'delete-meeting') return deleteMeetingConfirmed();
+      if (action === 'confirm-export-wbs') return confirmExportWbs();
+      if (action === 'export-wbs') return exportWbsNow();
       if (action === 'join-member') return openJoinDialog();
       if (action === 'new-node') return openNodeCreateDialog(event.currentTarget.dataset.parentId, event.currentTarget.dataset.statusId);
       if (action === 'new-status') return openStatusDialog();
@@ -510,8 +522,13 @@
       } else {
         const target = draftForScope(button.dataset.calendarScope);
         if (target) {
-          target.startDate = '';
-          target.endDate = '';
+          const field = button.dataset.calendarField;
+          if (field === 'startDate' || field === 'endDate') {
+            target.startDate = '';
+            target.endDate = '';
+          } else {
+            target[field] = '';
+          }
         }
       }
       closeCalendar();
@@ -530,7 +547,9 @@
         if (target.startDate && dateText < target.startDate) return;
         if (!target.startDate) target.startDate = dateText;
         target.endDate = dateText;
+        return;
       }
+      target[field] = dateText;
     }
 
     function closeCalendar() {
@@ -575,12 +594,24 @@
       } else {
         target[field] = value;
       }
+      if (scope === 'detail' && field === 'progress') {
+        const progress = normalizeProgressValue(value);
+        target.progress = progress === null ? 0 : progress;
+        if (target.progress === 100) target.statusColumnId = doneStatusColumnId();
+      }
+      if (scope === 'detail' && field === 'statusColumnId') {
+        const doneId = doneStatusColumnId();
+        const previousProgress = normalizeProgressValue(target.progress);
+        if (value === doneId) target.progress = 100;
+        else if (previousProgress === 100) target.progress = 90;
+      }
     }
 
     function draftForScope(scope) {
       if (scope === 'node') return state.dialog && state.dialog.type === 'node' ? state.dialog.draft : null;
       if (scope === 'status') return state.dialog && state.dialog.type === 'status' ? state.dialog.draft : null;
       if (scope === 'member') return state.dialog && state.dialog.type === 'members' ? state.dialog.draft : null;
+      if (scope === 'projectSettings') return state.dialog && state.dialog.type === 'projectSettings' ? state.dialog.draft : null;
       if (scope === 'join') return state.dialog && state.dialog.type === 'join' ? state.dialog.draft : null;
       if (scope === 'detail') return state.detailDraft;
       if (scope === 'dependency') return dependencyDraft();

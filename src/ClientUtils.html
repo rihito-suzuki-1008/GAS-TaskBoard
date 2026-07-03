@@ -18,6 +18,48 @@
       ];
     }
 
+    function progressOptions() {
+      return [0, 15, 30, 45, 60, 75, 90, 100].map(value => ({ value: String(value), label: `${value}%` }));
+    }
+
+    function normalizeProgressValue(value) {
+      if (value === null || value === undefined || value === '') return null;
+      const numeric = Number(value);
+      return [0, 15, 30, 45, 60, 75, 90, 100].includes(numeric) ? numeric : null;
+    }
+
+    function doneStatusColumnId() {
+      const done = state.statusColumns.find(column => column.isDoneColumn) || state.statusColumns[0] || {};
+      return done.id || '';
+    }
+
+    function applyLocalNodePatch(node, patch) {
+      if (!node || !patch) return;
+      const previousStatus = node.statusColumnId;
+      if (patch.name !== undefined) node.name = patch.name;
+      if (patch.statusColumnId !== undefined) node.statusColumnId = patch.statusColumnId;
+      if (patch.priority !== undefined) node.priority = patch.priority;
+      if (patch.assigneeIds !== undefined) node.assigneeIds = (patch.assigneeIds || []).slice();
+      if (patch.startDate !== undefined) node.startDate = patch.startDate;
+      if (patch.endDate !== undefined) node.endDate = patch.endDate;
+      if (patch.description !== undefined) node.description = patch.description;
+      if (patch.deliverable !== undefined) node.deliverable = patch.deliverable;
+      if (patch.note !== undefined) node.note = patch.note;
+      if (patch.includeInWbs !== undefined) node.includeInWbs = patch.includeInWbs !== false;
+      if (patch.progress !== undefined) node.manualProgress = normalizeProgressValue(patch.progress);
+
+      const doneId = doneStatusColumnId();
+      if (patch.progress !== undefined && normalizeProgressValue(patch.progress) === 100) {
+        node.statusColumnId = doneId;
+        node.manualProgress = 100;
+      }
+      if (node.statusColumnId === doneId) {
+        node.manualProgress = 100;
+      } else if (patch.statusColumnId !== undefined && previousStatus === doneId && node.manualProgress === 100) {
+        node.manualProgress = 90;
+      }
+    }
+
     function priorityLabel(priority) {
       return priority === 'High' ? '高' : priority === 'Low' ? '低' : '中';
     }
@@ -150,6 +192,11 @@
     function nextLocalStatusSortOrder() {
       if (!state.statusColumns.length) return 1000;
       return Math.max(...state.statusColumns.map(column => Number(column.sortOrder) || 0)) + 1000;
+    }
+
+    function nextLocalSortOrder(rows) {
+      if (!rows || !rows.length) return 1000;
+      return Math.max(...rows.map(row => Number(row.sortOrder) || 0)) + 1000;
     }
 
     function normalizeClientEmail(value) {
@@ -361,6 +408,21 @@
 
     function canCreateChild(node) {
       return !!node && !nodeHasDependency(node.id);
+    }
+
+    function hasWbsExcludedAncestor(nodeId) {
+      return ancestorChain(nodeId).some(ancestorId => {
+        const ancestor = state.nodesById.get(ancestorId);
+        return ancestor && ancestor.includeInWbs === false;
+      });
+    }
+
+    function isNodeWbsExcluded(node) {
+      return !!node && (node.includeInWbs === false || hasWbsExcludedAncestor(node.id));
+    }
+
+    function renderWbsExcludedChip(node) {
+      return isNodeWbsExcluded(node) ? '<span class="chip wbs-out-chip">WBS外</span>' : '';
     }
 
     function hasPendingMutations() {

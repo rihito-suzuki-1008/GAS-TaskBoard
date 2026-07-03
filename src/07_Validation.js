@@ -61,6 +61,43 @@ function validateStatusId_(statusId, statusColumns) {
   return id;
 }
 
+function doneStatusColumnId_(statusColumns) {
+  const done = (statusColumns || []).find(function (column) { return isTrue_(column.IsDoneColumn); }) || (statusColumns || [])[0] || {};
+  return cleanString_(done.ColumnId);
+}
+
+function normalizeManualProgress_(value, allowBlank) {
+  const text = cleanString_(value);
+  if (allowBlank && text === '') {
+    return '';
+  }
+  const numeric = Number(text);
+  if (!Number.isFinite(numeric) || PROGRESS_VALUES.indexOf(numeric) === -1) {
+    throw new Error('進捗率は 0/15/30/45/60/75/90/100 のいずれかで指定してください。');
+  }
+  return numeric;
+}
+
+function validManualProgress_(value) {
+  const text = cleanString_(value);
+  if (text === '') {
+    return null;
+  }
+  const numeric = Number(text);
+  return PROGRESS_VALUES.indexOf(numeric) !== -1 ? numeric : null;
+}
+
+function effectiveLeafProgress_(node, doneColumnId) {
+  if (!node) {
+    return 0;
+  }
+  if (cleanString_(node.StatusColumnId) === doneColumnId) {
+    return 100;
+  }
+  const manual = validManualProgress_(node.Progress);
+  return manual === null ? 0 : manual;
+}
+
 function normalizePriority_(value) {
   const priority = cleanString_(value) || 'Mid';
   if (PRIORITIES.indexOf(priority) === -1) {
@@ -116,6 +153,13 @@ function normalizeEmail_(email) {
 function normalizeColor_(value) {
   const color = cleanString_(value);
   return /^#[0-9a-fA-F]{6}$/.test(color) ? color : '';
+}
+
+function normalizeIncludeInWbs_(value) {
+  if (value === undefined || value === null || cleanString_(value) === '') {
+    return true;
+  }
+  return isTrue_(value);
 }
 
 function normalizeStatusColor_(value, name, isDoneColumn) {

@@ -97,7 +97,8 @@ function joinAsMember(payload) {
       MemberId: memberId,
       Name: name,
       Email: email,
-      Color: color
+      Color: color,
+      Company: cleanString_(payload.company)
     });
     const freshMembers = readAll_().members;
     const currentMember = freshMembers.find(function (m) { return normalizeEmail_(m.Email) === email; });
@@ -119,6 +120,7 @@ function upsertMember(payload) {
     const email = normalizeEmail_(payload.email);
     const name = requireName_(payload.name);
     const color = normalizeColor_(payload.color) || '#1E6F5C';
+    const company = cleanString_(payload.company);
     const duplicate = rows.members.find(function (m) {
       return normalizeEmail_(m.Email) === email && cleanString_(m.MemberId) !== memberId;
     });
@@ -134,6 +136,7 @@ function upsertMember(payload) {
       member.Name = name;
       member.Email = email;
       member.Color = color;
+      member.Company = company;
       writeObject_(SHEET.MEMBERS, member);
     } else {
       const newMemberId = cleanString_(payload.clientMemberId);
@@ -145,7 +148,8 @@ function upsertMember(payload) {
         MemberId: newMemberId || newId_(),
         Name: name,
         Email: email,
-        Color: color
+        Color: color,
+        Company: company
       });
     }
     return { ok: true, members: readAll_().members.map(clientMember_) };

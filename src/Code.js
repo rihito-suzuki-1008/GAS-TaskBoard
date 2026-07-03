@@ -68,7 +68,8 @@ function setupProject(payload) {
       MemberId: memberId,
       Name: memberName,
       Email: email,
-      Color: memberColor
+      Color: memberColor,
+      Company: ''
     });
     appendObject_(SHEET.STATUS_COLUMNS, {
       ColumnId: statusTodo,
@@ -106,7 +107,11 @@ function setupProject(payload) {
       UpdatedAt: now,
       UpdatedBy: memberId,
       DeletedAt: '',
-      DeletedBy: ''
+      DeletedBy: '',
+      Deliverable: '',
+      Note: '',
+      Progress: '',
+      IncludeInWbs: true
     });
 
     return makeFullPayload_(readAll_());

@@ -47,7 +47,11 @@ function addNode(payload) {
       UpdatedAt: now,
       UpdatedBy: actor.MemberId,
       DeletedAt: '',
-      DeletedBy: ''
+      DeletedBy: '',
+      Deliverable: cleanString_(payload.deliverable),
+      Note: cleanString_(payload.note),
+      Progress: '',
+      IncludeInWbs: true
     };
 
     appendObject_(SHEET.NODES, node);
@@ -81,6 +85,9 @@ function saveNode(payload) {
     const beforeStart = cleanString_(node.StartDate);
     const beforeEnd = cleanString_(node.EndDate);
     const beforeStatus = cleanString_(node.StatusColumnId);
+    const doneColumnId = doneStatusColumnId_(rows.statusColumns);
+    const beforeProgress = effectiveLeafProgress_(node, doneColumnId);
+    const nodeHadChildren = (childrenMap_(active)[node.NodeId] || []).length > 0;
     applyNodePatch_(node, patch, rows);
     node.UpdatedAt = nowIso_();
     node.UpdatedBy = actor.MemberId;
@@ -91,6 +98,8 @@ function saveNode(payload) {
 
     const scheduleChanged = beforeStart !== node.StartDate || beforeEnd !== node.EndDate;
     const statusChanged = beforeStatus !== node.StatusColumnId;
+    const afterProgress = effectiveLeafProgress_(node, doneColumnId);
+    const progressChanged = !nodeHadChildren && beforeProgress !== afterProgress;
     const writeMap = {};
     writeMap[node.NodeId] = node;
 
@@ -100,6 +109,16 @@ function saveNode(payload) {
     }
 
     writeObjects_(SHEET.NODES, Object.keys(writeMap).map(function (id) { return writeMap[id]; }));
+    appendNodeActivityLogs_(node.NodeId, {
+      statusChanged: statusChanged,
+      beforeStatus: beforeStatus,
+      afterStatus: cleanString_(node.StatusColumnId),
+      progressChanged: progressChanged,
+      beforeProgress: beforeProgress,
+      afterProgress: afterProgress,
+      doneColumnId: doneColumnId,
+      actorId: actor.MemberId
+    });
     rows = readAll_();
     const writeIds = Object.keys(writeMap);
     const affectedIds = unique_(writeIds.concat(ancestorIdsForMany_(writeIds, activeNodes_(rows.nodes))));
@@ -119,7 +138,8 @@ function saveNode(payload) {
     }
     return makeMutationPayload_(rows, affectedIds, requestId, {
       rescheduledCount: rescheduleResult.shiftedIds.filter(function (id) { return id !== node.NodeId; }).length,
-      statusChanged: statusChanged
+      statusChanged: statusChanged,
+      progressChanged: progressChanged
     });
   });
   if (statusNotification) {
@@ -253,11 +273,27 @@ function fitNodeToChildren(payload) {
 }
 
 function applyNodePatch_(node, patch, rows) {
+  const hasStatusPatch = Object.prototype.hasOwnProperty.call(patch, 'statusColumnId');
+  const hasProgressPatch = Object.prototype.hasOwnProperty.call(patch, 'progress');
+  const doneColumnId = doneStatusColumnId_(rows.statusColumns);
+  const beforeDone = cleanString_(node.StatusColumnId) === doneColumnId;
+  const active = activeNodes_(rows.nodes);
+  const childIds = childrenMap_(active)[cleanString_(node.NodeId)] || [];
+  const normalizedProgress = hasProgressPatch ? normalizeManualProgress_(patch.progress, true) : null;
+  const normalizedStatus = hasStatusPatch ? validateStatusId_(patch.statusColumnId, rows.statusColumns) : '';
+
+  if (hasProgressPatch && childIds.length) {
+    throw new Error('親タスクの進捗率は子タスクから自動計算されます。');
+  }
+  if (hasProgressPatch && normalizedProgress === 100 && hasStatusPatch && normalizedStatus !== doneColumnId) {
+    throw new Error('進捗100%は完了ステータスでのみ設定できます。');
+  }
+
   if (patch.name !== undefined) {
     node.Name = requireName_(patch.name);
   }
-  if (patch.statusColumnId !== undefined) {
-    node.StatusColumnId = validateStatusId_(patch.statusColumnId, rows.statusColumns);
+  if (hasStatusPatch) {
+    node.StatusColumnId = normalizedStatus;
   }
   if (patch.assigneeIds !== undefined) {
     node.AssigneeIds = normalizeAssigneeIds_(patch.assigneeIds, rows.members).join(',');
@@ -272,6 +308,34 @@ function applyNodePatch_(node, patch, rows) {
     }
     node.Description = description;
   }
+  if (patch.deliverable !== undefined) {
+    const deliverable = cleanString_(patch.deliverable);
+    if (deliverable.length > 1000) {
+      throw new Error('成果物は1000文字以内で入力してください。');
+    }
+    node.Deliverable = deliverable;
+  }
+  if (patch.note !== undefined) {
+    const note = cleanString_(patch.note);
+    if (note.length > 1000) {
+      throw new Error('備考は1000文字以内で入力してください。');
+    }
+    node.Note = note;
+  }
+  if (patch.includeInWbs !== undefined) {
+    node.IncludeInWbs = normalizeIncludeInWbs_(patch.includeInWbs);
+  }
+  if (hasProgressPatch) {
+    node.Progress = normalizedProgress === '' ? '' : normalizedProgress;
+    if (normalizedProgress === 100) {
+      node.StatusColumnId = doneColumnId;
+    }
+  }
+  if (cleanString_(node.StatusColumnId) === doneColumnId) {
+    node.Progress = 100;
+  } else if (hasStatusPatch && beforeDone && !hasProgressPatch) {
+    node.Progress = 90;
+  }
   if (patch.startDate !== undefined || patch.endDate !== undefined) {
     const schedule = normalizeSchedule_(
       patch.startDate !== undefined ? patch.startDate : node.StartDate,
@@ -279,5 +343,33 @@ function applyNodePatch_(node, patch, rows) {
     );
     node.StartDate = schedule.startDate;
     node.EndDate = schedule.endDate;
+  }
+}
+
+function appendNodeActivityLogs_(nodeId, change) {
+  const now = nowIso_();
+  if (change.statusChanged) {
+    appendObject_(SHEET.ACTIVITY_LOG, {
+      LogId: newId_(),
+      NodeId: nodeId,
+      Field: 'status',
+      OldValue: change.beforeStatus,
+      NewValue: change.afterStatus,
+      NewValueIsDone: change.afterStatus === change.doneColumnId,
+      ChangedAt: now,
+      ChangedBy: change.actorId
+    });
+  }
+  if (change.progressChanged) {
+    appendObject_(SHEET.ACTIVITY_LOG, {
+      LogId: newId_(),
+      NodeId: nodeId,
+      Field: 'progress',
+      OldValue: change.beforeProgress,
+      NewValue: change.afterProgress,
+      NewValueIsDone: Number(change.afterProgress) === 100,
+      ChangedAt: now,
+      ChangedBy: change.actorId
+    });
   }
 }

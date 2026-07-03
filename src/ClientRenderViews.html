@@ -22,7 +22,9 @@
           </nav>
           <div class="top-actions">
             <button class="button secondary" data-action="members">${icon('users')}メンバー</button>
+            <button class="button secondary" data-action="project-settings" title="プロジェクト設定">${icon('settings')}設定</button>
             <button class="button secondary" data-action="force-sync" title="強制同期">${icon('refresh')}強制同期</button>
+            <button class="button primary" data-action="confirm-export-wbs" ${state.exportWbsSubmitting ? 'disabled' : ''}>${state.exportWbsSubmitting ? '<span class="btn-spinner"></span>' : icon('database')}WBSに上書き</button>
           </div>
         </header>
         ${state.currentMember ? '' : `<button class="banner banner-action" type="button" data-action="join-member">このメールアドレスはメンバー未登録です。保存操作は利用不可</button>`}
@@ -205,6 +207,7 @@
       bindFormOnce('nodeDialogForm', createNodeFromDialog);
       bindFormOnce('statusDialogForm', saveStatusFromDialog);
       bindFormOnce('memberForm', saveMemberFromDialog);
+      bindFormOnce('projectSettingsForm', saveProjectSettingsDraft);
     }
 
     function bindFormOnce(id, handler) {
@@ -387,6 +390,7 @@
           <div class="task-card-title">${h(node.name || '新しいタスク')}</div>
           <div class="card-meta">
             ${renderAvatars(node.assigneeIds)}
+            ${renderWbsExcludedChip(node)}
             ${node.endDate ? `<span class="due-badge ${dueClass(node.endDate)}">${h(shortDate(node.endDate))}</span>` : ''}
           </div>
         </article>
@@ -454,6 +458,7 @@
               <span class="indent" style="--tree-depth:${depth}"></span>
               ${node.hasChildren ? `<button class="button ghost icon compact" data-toggle-node="${h(node.id)}">${icon(state.collapsed.has(node.id) ? 'chevron-right' : 'chevron-down')}</button>` : '<span class="button icon compact" aria-hidden="true"></span>'}
               <span class="tree-name ${node.name ? '' : 'placeholder'}" data-open-node="${h(node.id)}">${h(node.name || '新しいタスク')}</span>
+              ${renderWbsExcludedChip(node)}
               <button class="button ghost icon compact" data-open-node="${h(node.id)}" title="編集">${icon('edit')}</button>
               ${showAdd ? `<button class="button ghost icon compact row-add-child" data-action="create-child-shell" data-parent-id="${h(node.id)}" title="子タスクを追加">${icon('plus')}</button>` : ''}
               ${state.savingNodeIds.has(node.id) ? '<span class="saving-dot inline"></span>' : ''}
@@ -548,6 +553,7 @@
             <span class="indent" style="--tree-depth:${taskDepthOf(node.id)}"></span>
             ${node.hasChildren ? `<button class="button ghost icon compact" data-toggle-node="${h(node.id)}">${icon(state.collapsed.has(node.id) ? 'chevron-right' : 'chevron-down')}</button>` : '<span class="button icon compact" aria-hidden="true"></span>'}
             <span class="tree-name ${node.name ? '' : 'placeholder'}" data-open-node="${h(node.id)}">${h(node.name || '新しいタスク')}</span>
+            ${renderWbsExcludedChip(node)}
             <button class="button ghost icon compact" data-open-node="${h(node.id)}" title="編集">${icon('edit')}</button>
             ${showAdd ? `<button class="button ghost icon compact row-add-child" data-action="create-child-shell" data-parent-id="${h(node.id)}" title="子タスクを追加">${icon('plus')}</button>` : ''}
             ${state.savingNodeIds.has(node.id) ? '<span class="saving-dot inline"></span>' : ''}
