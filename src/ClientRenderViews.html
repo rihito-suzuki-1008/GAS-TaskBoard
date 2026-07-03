@@ -257,6 +257,14 @@
           })}
           ${renderDropdown({
             scope: 'filters',
+            field: 'statusIds',
+            placeholder: '全ステータス',
+            selected: state.filters.statusIds || [],
+            multi: true,
+            options: state.statusColumns.map(column => ({ value: column.id, label: column.name, color: column.color || defaultStatusColor(column) }))
+          })}
+          ${renderDropdown({
+            scope: 'filters',
             field: 'assigneeId',
             placeholder: '全担当',
             selected: state.filters.assigneeId,
@@ -287,6 +295,10 @@
       if (state.filters.parentId) {
         const node = state.nodesById.get(state.filters.parentId);
         chips.push({ field: 'parentId', label: node ? `階層: ${node.name}` : '階層' });
+      }
+      if ((state.filters.statusIds || []).length) {
+        const names = state.filters.statusIds.map(id => statusName(id)).filter(Boolean);
+        chips.push({ field: 'statusIds', label: `ステータス: ${names.slice(0, 3).join('・')}${names.length > 3 ? ` +${names.length - 3}` : ''}` });
       }
       if (state.filters.assigneeId) {
         const member = state.memberById.get(state.filters.assigneeId);
@@ -387,6 +399,7 @@
       return `
         <article class="task-card ${state.draggingCardId === node.id ? 'dragging' : ''}" draggable="true" data-card-id="${h(node.id)}" style="--priority-color:${priorityColorVar(node.priority)}">
           ${state.savingNodeIds.has(node.id) ? '<span class="saving-dot"></span>' : ''}
+          <span class="card-drag-handle" title="ドラッグして並び替え">${icon('grip')}</span>
           <div class="task-card-title">${h(node.name || '新しいタスク')}</div>
           <div class="card-meta">
             ${renderAvatars(node.assigneeIds)}
@@ -424,12 +437,12 @@
             <table>
               <thead>
                 <tr>
-                  <th style="width:40%">名称</th>
-                  <th style="width:12%">ステータス</th>
+                  <th style="width:32%">名称</th>
+                  <th style="width:13%">ステータス</th>
                   <th style="width:16%">担当</th>
                   <th style="width:10%">優先度</th>
-                  <th style="width:16%">期間</th>
-                  <th style="width:8%">進捗</th>
+                  <th style="width:20%">期間</th>
+                  <th style="width:9%">進捗</th>
                 </tr>
               </thead>
               <tbody>${renderListRows()}</tbody>
@@ -451,26 +464,46 @@
     function renderListRow(node) {
       const depth = taskDepthOf(node.id);
       const showAdd = canCreateChild(node);
+      const inlineScope = `inline:${node.id}`;
+      const progressValue = inlineProgressValue(node);
+      const progressTone = progressColor(progressValue) || '#DDE3DF';
       return `
-        <tr class="${state.shellNodeId === node.id ? 'shell-node-row' : ''}" data-tree-node="${h(node.id)}" draggable="${node.id !== state.rootId}">
+        <tr class="${state.shellNodeId === node.id ? 'shell-node-row' : ''}" data-tree-node="${h(node.id)}">
           <td>
             <div class="tree-cell">
+              <span class="row-drag-handle" draggable="true" data-node-drag-handle="${h(node.id)}" title="ドラッグして並び替え">${icon('grip')}</span>
               <span class="indent" style="--tree-depth:${depth}"></span>
               ${node.hasChildren ? `<button class="button ghost icon compact" data-toggle-node="${h(node.id)}">${icon(state.collapsed.has(node.id) ? 'chevron-right' : 'chevron-down')}</button>` : '<span class="button icon compact" aria-hidden="true"></span>'}
-              <span class="tree-name ${node.name ? '' : 'placeholder'}" data-open-node="${h(node.id)}">${h(node.name || '新しいタスク')}</span>
+              <input class="inline-cell-input inline-name-input ${node.name ? '' : 'placeholder'}" data-inline-node="${h(node.id)}" data-inline-field="name" value="${h(node.name || '')}" placeholder="新しいタスク">
               ${renderWbsExcludedChip(node)}
               <button class="button ghost icon compact" data-open-node="${h(node.id)}" title="編集">${icon('edit')}</button>
               ${showAdd ? `<button class="button ghost icon compact row-add-child" data-action="create-child-shell" data-parent-id="${h(node.id)}" title="子タスクを追加">${icon('plus')}</button>` : ''}
               ${state.savingNodeIds.has(node.id) ? '<span class="saving-dot inline"></span>' : ''}
             </div>
           </td>
-          <td>${renderStatusChip(node.statusColumnId)}</td>
-          <td>${renderAvatars(node.assigneeIds)}</td>
-          <td><span class="chip">${h(priorityLabel(node.priority))}</span></td>
-          <td><span class="due-badge ${dueClass(node.endDate)}">${h(formatRange(node.startDate, node.endDate))}</span></td>
-          <td class="mono">${Math.round(node.progress)}%</td>
+          <td>${renderDropdown({ scope: inlineScope, field: 'statusColumnId', selected: node.statusColumnId, options: state.statusColumns.map(column => ({ value: column.id, label: column.name, color: column.color || defaultStatusColor(column) })) })}</td>
+          <td>${renderDropdown({ scope: inlineScope, field: 'assigneeIds', selected: node.assigneeIds, multi: true, placeholder: '未割当', options: state.members.map(member => ({ value: member.id, label: member.name, avatar: member })) })}</td>
+          <td>${renderDropdown({ scope: inlineScope, field: 'priority', selected: node.priority, options: priorityOptions() })}</td>
+          <td>
+            <div class="inline-date-range">
+              ${renderDatePicker({ scope: inlineScope, field: 'startDate', selected: node.startDate, endDate: node.endDate, placeholder: '開始' })}
+              ${renderDatePicker({ scope: inlineScope, field: 'endDate', selected: node.endDate, startDate: node.startDate, minDate: node.startDate, placeholder: '終了' })}
+            </div>
+          </td>
+          <td>
+            ${node.hasChildren
+              ? `<span class="progress-pill" style="--progress-color:${h(progressTone)}">${Math.round(node.progress)}%</span>`
+              : renderDropdown({ scope: inlineScope, field: 'progress', selected: String(progressValue), options: progressOptions() })}
+          </td>
         </tr>
       `;
+    }
+
+    function inlineProgressValue(node) {
+      if (!node) return 0;
+      if (node.hasChildren) return Math.round(node.progress || 0);
+      const manual = normalizeProgressValue(node.manualProgress);
+      return manual === null ? 0 : manual;
     }
 
     function renderStatusChip(statusColumnId) {
@@ -548,8 +581,9 @@
     function renderGanttTreeRow(node) {
       const showAdd = canCreateChild(node);
       return `
-        <div class="gantt-tree-row ${state.shellNodeId === node.id ? 'shell-node-row' : ''}" data-tree-node="${h(node.id)}" draggable="${node.id !== state.rootId}">
+        <div class="gantt-tree-row ${state.shellNodeId === node.id ? 'shell-node-row' : ''}" data-tree-node="${h(node.id)}">
           <div class="gantt-tree-main">
+            <span class="row-drag-handle" draggable="true" data-node-drag-handle="${h(node.id)}" title="ドラッグして並び替え">${icon('grip')}</span>
             <span class="indent" style="--tree-depth:${taskDepthOf(node.id)}"></span>
             ${node.hasChildren ? `<button class="button ghost icon compact" data-toggle-node="${h(node.id)}">${icon(state.collapsed.has(node.id) ? 'chevron-right' : 'chevron-down')}</button>` : '<span class="button icon compact" aria-hidden="true"></span>'}
             <span class="tree-name ${node.name ? '' : 'placeholder'}" data-open-node="${h(node.id)}">${h(node.name || '新しいタスク')}</span>

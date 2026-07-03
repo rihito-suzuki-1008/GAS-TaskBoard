@@ -1338,15 +1338,81 @@
       return ids;
     }
 
-    function moveNodeTo(nodeId, newParentId) {
+    function saveInlineNodeField(nodeId, field, value) {
       const node = state.nodesById.get(nodeId);
-      if (!node || node.id === state.rootId || node.parentId === newParentId) return;
+      if (!node || node.id === state.rootId) return;
+      const patch = {};
+      if (field === 'name') {
+        const name = cleanText(value);
+        if (!name) {
+          showToast('名称を入力', 'warning');
+          render();
+          return;
+        }
+        if (name === node.name) return;
+        patch.name = name;
+      } else if (field === 'statusColumnId') {
+        if (value === node.statusColumnId) return;
+        patch.statusColumnId = value;
+      } else if (field === 'assigneeIds') {
+        const next = Array.isArray(value) ? value.slice() : [];
+        if (next.join(',') === (node.assigneeIds || []).join(',')) return;
+        patch.assigneeIds = next;
+      } else if (field === 'priority') {
+        if (value === node.priority) return;
+        patch.priority = value;
+      } else if (field === 'progress') {
+        if (node.hasChildren) return;
+        const progress = normalizeProgressValue(value);
+        if (progress === null) return;
+        const current = normalizeProgressValue(node.manualProgress) === null ? 0 : normalizeProgressValue(node.manualProgress);
+        if (progress === current) return;
+        patch.progress = progress;
+      } else if (field === 'startDate' || field === 'endDate') {
+        const datePatch = inlineDatePatch(node, field, value);
+        if (!datePatch) return;
+        Object.assign(patch, datePatch);
+      } else {
+        return;
+      }
+      saveNodePatch(nodeId, patch, () => {
+        applyLocalNodePatch(node, patch);
+      });
+    }
+
+    function inlineDatePatch(node, field, dateText) {
+      const next = { startDate: node.startDate || '', endDate: node.endDate || '' };
+      if (field === 'startDate') {
+        next.startDate = dateText;
+        if (!next.endDate || next.endDate < dateText) next.endDate = dateText;
+      } else {
+        if (next.startDate && dateText < next.startDate) return null;
+        if (!next.startDate) next.startDate = dateText;
+        next.endDate = dateText;
+      }
+      if (next.startDate === (node.startDate || '') && next.endDate === (node.endDate || '')) return null;
+      return next;
+    }
+
+    function moveNodeTo(nodeId, newParentId, newSortOrder) {
+      const node = state.nodesById.get(nodeId);
+      if (!node || node.id === state.rootId) return;
+      const sortOrder = Number(newSortOrder);
+      const hasSortOrder = Number.isFinite(sortOrder);
+      if (node.parentId === newParentId && (!hasSortOrder || sortOrder === node.sortOrder)) return;
+      const previousNode = cloneNode(node);
       queueNodeMutation(nodeId, 'moveNode', () => ({
         nodeId,
         newParentId,
+        newSortOrder: hasSortOrder ? sortOrder : '',
         baseUpdatedAt: currentUpdatedAt(nodeId)
       }), () => {
         node.parentId = newParentId;
+        if (hasSortOrder) node.sortOrder = sortOrder;
+      }, {
+        rollback: () => {
+          if (previousNode) mergeNodes([previousNode]);
+        }
       });
     }
 

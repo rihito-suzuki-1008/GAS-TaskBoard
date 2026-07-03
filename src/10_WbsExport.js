@@ -229,14 +229,13 @@ var WBS_COLORS = {
 
 var WBS_PROGRESS_OPTIONS = ['0.0', '0.15', '0.3', '0.45', '0.6', '0.75', '0.9', '1'];
 var WBS_PROGRESS_COLORS = [
-  { value: 0, color: '#D9D9D9' },
-  { value: 0.15, color: '#F4CCCC' },
-  { value: 0.3, color: '#FCE5CD' },
-  { value: 0.45, color: '#FFF2CC' },
-  { value: 0.6, color: '#D9EAD3' },
-  { value: 0.75, color: '#CFE2F3' },
-  { value: 0.9, color: '#D9D2E9' },
-  { value: 1, color: '#B6D7A8' }
+  { value: 0, color: '#e67c73' },
+  { value: 0.15, color: '#e98f82' },
+  { value: 0.3, color: '#eda392' },
+  { value: 0.45, color: '#f1b6a3' },
+  { value: 0.6, color: '#f5cab3' },
+  { value: 0.75, color: '#f8dec3' },
+  { value: 0.9, color: '#fcf1d1' }
 ];
 
 function buildWbsLayout_(maxDepth, meetingCount, taskCount) {
@@ -570,6 +569,7 @@ function applyWbsTemplateFormats_(sheet, model, rowCount, colCount) {
     .setFontWeight('bold')
     .setHorizontalAlignment('center');
   sheet.getRangeList(['C1', 'K1:L1', 'N1']).setFontWeight('bold');
+  sheet.getRange(layout.headerRow1, layout.companyCol, 1, 1).setHorizontalAlignment('left');
   sheet.getRange(layout.headerRow1, layout.ganttStartCol, 1, model.dateColumns.length || 1).setNumberFormat('m/d');
   sheet.getRange(2, layout.planStartCol, 1, 2).setNumberFormat('yyyy/mm/dd');
   sheet.getRange(2, layout.actualStartCol, 1, 1).setNumberFormat('yyyy/mm/dd');
@@ -618,6 +618,7 @@ function applyWbsTemplateBorders_(sheet, model) {
   border(layout.headerRow1, layout.taskNameStartCol, 2, layout.taskDisplayCol - layout.taskNameStartCol + 1, true, true, true, true, null, null);
   border(layout.headerRow1, layout.deliverableCol, 2, 1, true, true, true, true, null, null);
   border(layout.headerRow1, layout.noteCol, 2, 1, true, true, true, true, null, null);
+  border(layout.headerRow1, layout.noteCol, 2, 1, null, null, null, true, null, null);
   border(layout.headerRow1, layout.companyCol, 2, 2, true, true, true, true, true, true);
   border(layout.headerRow1, layout.planStartCol, 1, 3, true, null, true, true, null, null);
   border(layout.headerRow2, layout.planStartCol, 1, 3, true, true, true, true, true, null);
@@ -675,7 +676,7 @@ function buildWbsConditionalFormatRules_(sheet, model) {
       return sheet.getRange(block.start, layout.progressCol, block.count, 1);
     });
     rules.push(SpreadsheetApp.newConditionalFormatRule()
-      .whenFormulaSatisfied('=AND(S$4>=$K' + layout.taskStartRow + '-0.0001,S$4<=$L' + layout.taskStartRow + '+0.0001)')
+      .whenFormulaSatisfied('=AND(WEEKDAY(S$4)<>1,WEEKDAY(S$4)<>7,S$4>=$K' + layout.taskStartRow + '-0.0001,S$4<=$L' + layout.taskStartRow + '+0.0001)')
       .setBackground(WBS_COLORS.plan)
       .setRanges([taskGanttRange])
       .build());

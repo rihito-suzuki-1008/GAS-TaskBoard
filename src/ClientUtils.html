@@ -19,7 +19,25 @@
     }
 
     function progressOptions() {
-      return [0, 15, 30, 45, 60, 75, 90, 100].map(value => ({ value: String(value), label: `${value}%` }));
+      return [0, 15, 30, 45, 60, 75, 90, 100].map(value => ({
+        value: String(value),
+        label: `${value}%`,
+        color: progressColor(value),
+        chipColor: Boolean(progressColor(value))
+      }));
+    }
+
+    function progressColor(value) {
+      const colors = {
+        0: '#e67c73',
+        15: '#e98f82',
+        30: '#eda392',
+        45: '#f1b6a3',
+        60: '#f5cab3',
+        75: '#f8dec3',
+        90: '#fcf1d1'
+      };
+      return colors[Number(value)] || '';
     }
 
     function normalizeProgressValue(value) {
@@ -434,6 +452,7 @@
       return Boolean(
         state.filters.query.trim()
         || state.filters.parentId
+        || (state.filters.statusIds || []).length
         || state.filters.assigneeId
         || state.filters.priority
         || state.filters.dateStart

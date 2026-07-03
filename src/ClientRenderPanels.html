@@ -22,7 +22,7 @@
               <section class="drawer-section">
                 <div class="field wide">
                   <span class="field-label">名称</span>
-                  <input class="input" data-detail-name-input data-draft-scope="detail" data-draft-field="name" value="${h(draft.name)}">
+                  <textarea class="textarea task-name-textarea" rows="2" data-detail-name-input data-draft-scope="detail" data-draft-field="name">${h(draft.name)}</textarea>
                 </div>
                 <div class="field-grid">
                   <label class="field">
@@ -357,7 +357,7 @@
               <div class="field-grid">
                 <label class="field wide">
                   <span class="field-label">名称</span>
-                  <input class="input" data-draft-scope="node" data-draft-field="name" value="${h(draft.name)}" autofocus>
+                  <textarea class="textarea task-name-textarea" rows="2" data-draft-scope="node" data-draft-field="name" autofocus>${h(draft.name)}</textarea>
                 </label>
                 <label class="field wide">
                   <span class="field-label">親</span>
@@ -770,6 +770,7 @@
 
     function renderSingleValue(option, placeholder) {
       if (!option) return `<span class="dropdown-placeholder">${h(placeholder || '選択')}</span>`;
+      if (option.chipColor) return `<span class="option-color-chip" style="--option-color:${h(option.color)}">${h(option.label)}</span>`;
       return `<span class="option-main">${option.color ? `<span class="color-dot" style="background:${h(option.color)}"></span>` : ''}${option.avatar ? renderAvatar(option.avatar) : ''}<span>${h(option.label)}</span></span>`;
     }
 
@@ -781,7 +782,7 @@
     function renderDropdownOption(id, option, isSelected) {
       return `
         <button class="dropdown-option ${isSelected ? 'selected' : ''}" type="button" role="option" aria-selected="${isSelected ? 'true' : 'false'}" data-dropdown-option="${h(id)}" data-value="${h(option.value)}">
-          <span class="option-main">${option.color ? `<span class="color-dot" style="background:${h(option.color)}"></span>` : ''}${option.avatar ? renderAvatar(option.avatar) : ''}<span>${h(option.label)}</span></span>
+          <span class="option-main">${option.chipColor ? `<span class="option-color-chip" style="--option-color:${h(option.color)}">${h(option.label)}</span>` : `${option.color ? `<span class="color-dot" style="background:${h(option.color)}"></span>` : ''}${option.avatar ? renderAvatar(option.avatar) : ''}<span>${h(option.label)}</span>`}</span>
           ${isSelected ? `<span class="checkmark">${icon('check')}</span>` : ''}
         </button>
       `;

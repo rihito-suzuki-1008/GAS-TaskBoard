@@ -173,7 +173,31 @@
           state.draggingCardId = '';
           state.draggedNodeId = '';
           state.dragOverColumnId = '';
+          clearTaskDropIndicators();
           render();
+        });
+        card.addEventListener('dragover', event => {
+          if (state.columnDragId) return;
+          const sourceId = state.draggedNodeId || event.dataTransfer.getData('text/plain');
+          if (!sourceId || sourceId === card.dataset.cardId) return;
+          event.preventDefault();
+          event.stopPropagation();
+          showTaskDropIndicator(card, isBeforeCardDrop(event, card) ? 'before' : 'after');
+        });
+        card.addEventListener('dragleave', event => {
+          if (!card.contains(event.relatedTarget)) clearTaskDropIndicators(card);
+        });
+        card.addEventListener('drop', event => {
+          if (state.columnDragId) return;
+          const sourceId = state.draggedNodeId || event.dataTransfer.getData('text/plain');
+          const targetId = card.dataset.cardId;
+          const before = isBeforeCardDrop(event, card);
+          event.preventDefault();
+          event.stopPropagation();
+          clearTaskDropIndicators();
+          state.draggingCardId = '';
+          state.draggedNodeId = '';
+          dropNodeOnKanbanCard(sourceId, targetId, before);
         });
         card.addEventListener('click', () => openNode(card.dataset.cardId));
       });
@@ -220,8 +244,98 @@
       });
     }
 
+    function taskDropPlan(event, row) {
+      const sourceId = state.draggedNodeId || event.dataTransfer.getData('text/plain');
+      const targetId = row.dataset.treeNode;
+      if (!sourceId || !targetId) return null;
+      return buildNodeDropPlan(sourceId, targetId, verticalDropMode(event, row));
+    }
+
+    function buildNodeDropPlan(sourceId, targetId, mode) {
+      const source = state.nodesById.get(sourceId);
+      const target = state.nodesById.get(targetId);
+      if (!source || !target || source.id === state.rootId || source.id === target.id) return null;
+      if (isDescendantOf(target.id, source.id)) return null;
+      let dropMode = mode;
+      if (dropMode === 'inside' && !canCreateChild(target)) dropMode = 'after';
+      if (dropMode === 'inside') {
+        return {
+          mode: dropMode,
+          newParentId: target.id,
+          newSortOrder: sortOrderAtEnd(source.id, target.id)
+        };
+      }
+      const newParentId = target.parentId || state.rootId;
+      return {
+        mode: dropMode,
+        newParentId,
+        newSortOrder: sortOrderForSiblingInsert(source.id, newParentId, target.id, dropMode === 'before')
+      };
+    }
+
+    function dropNodeOnKanbanCard(sourceId, targetId, before) {
+      const source = state.nodesById.get(sourceId);
+      const target = state.nodesById.get(targetId);
+      if (!source || !target || source.id === target.id || isDescendantOf(target.id, source.id)) {
+        render();
+        return;
+      }
+      if (source.statusColumnId !== target.statusColumnId) {
+        saveNodePatch(source.id, { statusColumnId: target.statusColumnId }, () => {
+          applyLocalNodePatch(source, { statusColumnId: target.statusColumnId });
+        });
+      }
+      const newParentId = target.parentId || state.rootId;
+      const newSortOrder = sortOrderForSiblingInsert(source.id, newParentId, target.id, before);
+      moveNodeTo(source.id, newParentId, newSortOrder);
+    }
+
+    function verticalDropMode(event, element) {
+      const rect = element.getBoundingClientRect();
+      const ratio = rect.height ? (event.clientY - rect.top) / rect.height : 0.5;
+      if (ratio < 0.28) return 'before';
+      if (ratio > 0.72) return 'after';
+      return 'inside';
+    }
+
+    function isBeforeCardDrop(event, card) {
+      const rect = card.getBoundingClientRect();
+      return (event.clientY - rect.top) < rect.height / 2;
+    }
+
+    function sortOrderAtEnd(sourceId, parentId) {
+      const siblings = childrenOf(parentId).filter(node => node.id !== sourceId);
+      if (!siblings.length) return 1000;
+      return Math.max(...siblings.map(node => Number(node.sortOrder) || 0)) + 1000;
+    }
+
+    function sortOrderForSiblingInsert(sourceId, parentId, targetId, before) {
+      const siblings = childrenOf(parentId).filter(node => node.id !== sourceId).sort(compareNodeOrder);
+      const targetIndex = siblings.findIndex(node => node.id === targetId);
+      const insertAt = targetIndex === -1 ? siblings.length : before ? targetIndex : targetIndex + 1;
+      const prev = siblings[insertAt - 1];
+      const next = siblings[insertAt];
+      if (prev && next) return ((Number(prev.sortOrder) || 0) + (Number(next.sortOrder) || 0)) / 2;
+      if (prev) return (Number(prev.sortOrder) || 0) + 1000;
+      if (next) return (Number(next.sortOrder) || 0) - 1000;
+      return 1000;
+    }
+
+    function showTaskDropIndicator(element, mode) {
+      clearTaskDropIndicators(element);
+      element.classList.add(`task-drop-${mode}`);
+    }
+
+    function clearTaskDropIndicators(except) {
+      document.querySelectorAll('.task-drop-before, .task-drop-after, .task-drop-inside').forEach(element => {
+        if (except && element === except) return;
+        element.classList.remove('task-drop-before', 'task-drop-after', 'task-drop-inside');
+      });
+    }
+
     function bindTreeRows() {
       bindCreatePreviewTriggers();
+      bindInlineControls();
       document.querySelectorAll('[data-toggle-node]').forEach(button => {
         button.addEventListener('click', event => {
           event.stopPropagation();
@@ -234,17 +348,42 @@
           openNode(element.dataset.openNode);
         });
       });
-      document.querySelectorAll('[data-tree-node]').forEach(row => {
-        row.addEventListener('dragstart', event => {
-          state.draggedNodeId = row.dataset.treeNode;
+      document.querySelectorAll('[data-node-drag-handle]').forEach(handle => {
+        handle.addEventListener('dragstart', event => {
+          event.stopPropagation();
+          state.draggedNodeId = handle.dataset.nodeDragHandle;
+          state.listSort = { field: 'sortOrder', dir: 1 };
+          event.dataTransfer.effectAllowed = 'move';
           event.dataTransfer.setData('text/plain', state.draggedNodeId);
+          const row = handle.closest('[data-tree-node]');
+          if (row) row.classList.add('task-dragging');
         });
-        row.addEventListener('dragover', event => event.preventDefault());
+        handle.addEventListener('dragend', () => {
+          state.draggedNodeId = '';
+          clearTaskDropIndicators();
+          document.querySelectorAll('.task-dragging').forEach(element => element.classList.remove('task-dragging'));
+        });
+      });
+      document.querySelectorAll('[data-tree-node]').forEach(row => {
+        row.addEventListener('dragover', event => {
+          const plan = taskDropPlan(event, row);
+          if (!plan) return;
+          event.preventDefault();
+          showTaskDropIndicator(row, plan.mode);
+        });
+        row.addEventListener('dragleave', event => {
+          if (!row.contains(event.relatedTarget)) clearTaskDropIndicators(row);
+        });
         row.addEventListener('drop', event => {
           event.preventDefault();
           const nodeId = state.draggedNodeId || event.dataTransfer.getData('text/plain');
-          const newParentId = row.dataset.treeNode;
-          if (nodeId && nodeId !== newParentId) moveNodeTo(nodeId, newParentId);
+          const plan = taskDropPlan(event, row);
+          clearTaskDropIndicators();
+          state.draggedNodeId = '';
+          if (plan && nodeId) {
+            if (plan.newParentId) state.collapsed.delete(plan.newParentId);
+            moveNodeTo(nodeId, plan.newParentId, plan.newSortOrder);
+          }
         });
       });
       document.querySelectorAll('[data-sort-field]').forEach(button => {
@@ -264,6 +403,21 @@
         button.addEventListener('mouseleave', removeCreatePreview);
         button.addEventListener('blur', removeCreatePreview);
         button.addEventListener('click', removeCreatePreview);
+      });
+    }
+
+    function bindInlineControls() {
+      document.querySelectorAll('[data-inline-node][data-inline-field]').forEach(element => {
+        bindTextCompositionGuard(element);
+        bindOnce(element, 'keydown', event => {
+          if (event.key !== 'Enter' || event.shiftKey || event.isComposing || state.textComposing) return;
+          event.preventDefault();
+          event.currentTarget.blur();
+        });
+        bindOnce(element, 'blur', event => {
+          if (state.textComposing) return;
+          saveInlineNodeField(event.currentTarget.dataset.inlineNode, event.currentTarget.dataset.inlineField, event.currentTarget.value);
+        });
       });
     }
 
@@ -380,7 +534,7 @@
       if (action === 'confirm-status-delete') return confirmStatusDelete(event.currentTarget.dataset.columnId);
       if (action === 'close-dialog') return closeDialog();
       if (action === 'close-drawer') return closeDrawer();
-      if (action === 'save-detail') return saveDetail();
+      if (action === 'save-detail') return saveDetail({ closeAfter: true });
       if (action === 'save-detail-next') return saveDetail({ createNext: true });
       if (action === 'fit-children') return fitChildren(event.currentTarget.dataset.nodeId);
       if (action === 'confirm-node-delete') return confirmNodeDelete(event.currentTarget.dataset.nodeId);
@@ -401,12 +555,16 @@
     }
 
     function resetFilters() {
-      state.filters = { query: '', parentId: '', assigneeId: '', priority: '', dateStart: '', dateEnd: '' };
+      state.filters = { query: '', parentId: '', statusIds: [], assigneeId: '', priority: '', dateStart: '', dateEnd: '' };
       state.calendarView = null;
       state.openDropdown = '';
     }
 
     function clearFilterField(field) {
+      if (field === 'statusIds') {
+        state.filters.statusIds = [];
+        return;
+      }
       if (field === 'date') {
         state.filters.dateStart = '';
         state.filters.dateEnd = '';
@@ -418,7 +576,7 @@
 
     function ensureCalendarView(id) {
       if (state.calendarView && state.calendarView.id === id) return state.calendarView;
-      const [scope] = String(id || '').split(':');
+      const { scope } = splitControlId(id);
       const mode = scope === 'filters' && state.filters.dateStart && state.filters.dateEnd && state.filters.dateStart !== state.filters.dateEnd
         ? 'range'
         : 'single';
@@ -433,7 +591,7 @@
     }
 
     function calendarDefaultMonthDay(id) {
-      const [scope, field] = String(id || '').split(':');
+      const { scope, field } = splitControlId(id);
       if (scope === 'filters') return monthStartDay(dateToDay(state.filters.dateStart || dayToDate(localTodayDay())));
       const target = draftForScope(scope);
       const selected = target ? target[field] : '';
@@ -520,6 +678,21 @@
         state.filters.dateStart = '';
         state.filters.dateEnd = '';
       } else {
+        const inlineNodeId = inlineNodeIdFromScope(button.dataset.calendarScope);
+        if (inlineNodeId) {
+          const node = state.nodesById.get(inlineNodeId);
+          if (node && (node.startDate || node.endDate)) {
+            saveNodePatch(inlineNodeId, { startDate: '', endDate: '' }, () => {
+              node.startDate = '';
+              node.endDate = '';
+              node.displayStartDate = '';
+              node.displayEndDate = '';
+            });
+          }
+          closeCalendar();
+          render();
+          return;
+        }
         const target = draftForScope(button.dataset.calendarScope);
         if (target) {
           const field = button.dataset.calendarField;
@@ -536,6 +709,11 @@
     }
 
     function setDraftDate(scope, field, dateText) {
+      const inlineNodeId = inlineNodeIdFromScope(scope);
+      if (inlineNodeId) {
+        saveInlineNodeField(inlineNodeId, field, dateText);
+        return;
+      }
       const target = draftForScope(scope);
       if (!target) return;
       if (field === 'startDate') {
@@ -586,6 +764,19 @@
     }
 
     function setDropdownValue(scope, field, value, multi) {
+      const inlineNodeId = inlineNodeIdFromScope(scope);
+      if (inlineNodeId) {
+        const node = state.nodesById.get(inlineNodeId);
+        if (!node) return;
+        let nextValue = value;
+        if (multi) {
+          const current = Array.isArray(node[field]) ? node[field].slice() : [];
+          nextValue = current.includes(value) ? current.filter(item => item !== value) : current.concat(value);
+        }
+        if (!multi) state.openDropdown = '';
+        saveInlineNodeField(inlineNodeId, field, nextValue);
+        return;
+      }
       const target = scope === 'filters' ? state.filters : draftForScope(scope);
       if (!target) return;
       if (multi) {
@@ -608,6 +799,8 @@
     }
 
     function draftForScope(scope) {
+      const inlineNodeId = inlineNodeIdFromScope(scope);
+      if (inlineNodeId) return state.nodesById.get(inlineNodeId) || null;
       if (scope === 'node') return state.dialog && state.dialog.type === 'node' ? state.dialog.draft : null;
       if (scope === 'status') return state.dialog && state.dialog.type === 'status' ? state.dialog.draft : null;
       if (scope === 'member') return state.dialog && state.dialog.type === 'members' ? state.dialog.draft : null;
@@ -617,6 +810,18 @@
       if (scope === 'dependency') return dependencyDraft();
       if (scope === 'confirm') return state.dialog;
       return null;
+    }
+
+    function inlineNodeIdFromScope(scope) {
+      const text = String(scope || '');
+      return text.indexOf('inline:') === 0 ? text.slice('inline:'.length) : '';
+    }
+
+    function splitControlId(id) {
+      const text = String(id || '');
+      const index = text.lastIndexOf(':');
+      if (index === -1) return { scope: text, field: '' };
+      return { scope: text.slice(0, index), field: text.slice(index + 1) };
     }
 
     function dependencyDraft() {

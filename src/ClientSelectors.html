@@ -10,6 +10,7 @@
         if (!text.includes(query)) return false;
       }
       if (state.filters.parentId && node.id !== state.filters.parentId && !isDescendantOf(node.id, state.filters.parentId)) return false;
+      if ((state.filters.statusIds || []).length && !state.filters.statusIds.includes(node.statusColumnId)) return false;
       if (state.filters.assigneeId && !node.assigneeIds.includes(state.filters.assigneeId)) return false;
       if (state.filters.priority && node.priority !== state.filters.priority) return false;
       if (state.filters.dateStart && state.filters.dateEnd) {

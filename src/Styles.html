@@ -233,6 +233,12 @@
       line-height: 1.6;
     }
 
+    .task-name-textarea {
+      min-height: 64px;
+      resize: vertical;
+      overflow-wrap: anywhere;
+    }
+
     .input::placeholder,
     .textarea::placeholder {
       color: var(--color-text-tertiary);
@@ -354,7 +360,7 @@
 
     .filters {
       display: grid;
-      grid-template-columns: minmax(220px, 1.1fr) minmax(170px, 0.7fr) minmax(150px, 0.6fr) minmax(140px, 0.55fr) minmax(140px, 0.55fr) auto;
+      grid-template-columns: minmax(200px, 1.1fr) minmax(150px, 0.7fr) minmax(150px, 0.65fr) minmax(140px, 0.6fr) minmax(120px, 0.5fr) minmax(140px, 0.55fr) auto;
       gap: var(--space-3);
       align-items: center;
       padding: var(--space-3) var(--space-6);
@@ -602,9 +608,15 @@
 
     .calendar-menu {
       width: 304px;
+      max-width: min(304px, calc(100vw - var(--space-6)));
       max-height: none;
       overflow: visible;
       padding: var(--space-3);
+    }
+
+    .date-picker .calendar-menu {
+      left: auto;
+      right: 0;
     }
 
     .calendar-tabs {
@@ -735,6 +747,23 @@
       flex: 0 0 auto;
       border-radius: var(--radius-pill);
       background: var(--color-accent);
+    }
+
+    .option-color-chip,
+    .progress-pill {
+      min-height: 24px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid color-mix(in srgb, var(--option-color, var(--progress-color, var(--color-border))) 62%, var(--color-border));
+      border-radius: var(--radius-pill);
+      background: color-mix(in srgb, var(--option-color, var(--progress-color, var(--color-canvas))) 78%, var(--color-surface));
+      color: #3d2522;
+      padding: 0 var(--space-2);
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      font-weight: var(--weight-medium);
+      white-space: nowrap;
     }
 
     .color-picker {
@@ -1039,10 +1068,24 @@
     }
 
     .task-card-title {
-      padding-left: var(--space-1);
+      padding-left: var(--space-6);
       font-weight: var(--weight-medium);
       line-height: 1.45;
       word-break: break-word;
+    }
+
+    .card-drag-handle {
+      position: absolute;
+      top: var(--space-3);
+      left: var(--space-3);
+      display: inline-flex;
+      color: var(--color-text-tertiary);
+      cursor: grab;
+    }
+
+    .card-drag-handle:active,
+    .row-drag-handle:active {
+      cursor: grabbing;
     }
 
     .card-meta {
@@ -1165,6 +1208,95 @@
       align-items: center;
       gap: var(--space-2);
       min-width: 0;
+    }
+
+    .row-drag-handle {
+      width: 26px;
+      min-width: 26px;
+      min-height: 26px;
+      display: inline-grid;
+      place-items: center;
+      border-radius: var(--radius-md);
+      color: var(--color-text-tertiary);
+      cursor: grab;
+      flex: 0 0 auto;
+    }
+
+    .row-drag-handle:hover {
+      background: var(--color-canvas);
+      color: var(--color-text-primary);
+    }
+
+    .inline-cell-input {
+      width: 100%;
+      min-width: 0;
+      min-height: 34px;
+      border: 1px solid transparent;
+      border-radius: var(--radius-md);
+      background: transparent;
+      color: var(--color-text-primary);
+      padding: var(--space-1) var(--space-2);
+      font: inherit;
+      font-weight: var(--weight-medium);
+    }
+
+    .inline-cell-input:hover,
+    .inline-cell-input:focus {
+      border-color: var(--color-border);
+      background: var(--color-surface);
+      outline: none;
+    }
+
+    .inline-cell-input.placeholder::placeholder {
+      color: var(--color-text-tertiary);
+      font-weight: var(--weight-regular);
+    }
+
+    .inline-date-range {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-1);
+    }
+
+    .inline-date-range .dropdown-trigger,
+    td .dropdown-trigger {
+      min-height: 32px;
+      padding: var(--space-1) var(--space-2);
+    }
+
+    td .dropdown-menu {
+      z-index: 32;
+    }
+
+    .task-dragging {
+      opacity: 0.52;
+    }
+
+    .task-drop-before,
+    .task-drop-after,
+    .task-drop-inside {
+      position: relative;
+    }
+
+    tr.task-drop-before td,
+    tr.task-drop-after td,
+    .gantt-tree-row.task-drop-before,
+    .gantt-tree-row.task-drop-after,
+    .task-card.task-drop-before,
+    .task-card.task-drop-after {
+      box-shadow: inset 0 2px 0 var(--color-accent);
+    }
+
+    tr.task-drop-after td,
+    .gantt-tree-row.task-drop-after,
+    .task-card.task-drop-after {
+      box-shadow: inset 0 -2px 0 var(--color-accent);
+    }
+
+    tr.task-drop-inside td,
+    .gantt-tree-row.task-drop-inside,
+    .task-card.task-drop-inside {
+      background: var(--color-accent-subtle);
     }
 
     .indent {
@@ -1880,6 +2012,9 @@
 
     .drawer-title {
       flex: 1;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      line-height: 1.45;
     }
 
     .drawer-section {
