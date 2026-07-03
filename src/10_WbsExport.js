@@ -227,6 +227,18 @@ var WBS_COLORS = {
   border: '#000000'
 };
 
+var WBS_PROGRESS_OPTIONS = ['0.0', '0.15', '0.3', '0.45', '0.6', '0.75', '0.9', '1'];
+var WBS_PROGRESS_COLORS = [
+  { value: 0, color: '#D9D9D9' },
+  { value: 0.15, color: '#F4CCCC' },
+  { value: 0.3, color: '#FCE5CD' },
+  { value: 0.45, color: '#FFF2CC' },
+  { value: 0.6, color: '#D9EAD3' },
+  { value: 0.75, color: '#CFE2F3' },
+  { value: 0.9, color: '#D9D2E9' },
+  { value: 1, color: '#B6D7A8' }
+];
+
 function buildWbsLayout_(maxDepth, meetingCount, taskCount) {
   const noCol = 1;
   const taskNameStartCol = 2;
@@ -355,8 +367,8 @@ function fillWbsStaticSections_(values, backgrounds, layout, context) {
   values[1][10] = minStart ? wbsDateValue_(minStart) : '';
   values[1][11] = maxEnd ? wbsDateValue_(maxEnd) : '';
   values[1][13] = wbsDateValue_(nowDate);
-  wbsSetBackgrounds_(backgrounds, 1, 3, 1, 4, WBS_COLORS.metaLabel);
-  wbsSetBackgrounds_(backgrounds, 1, 7, 1, 2, WBS_COLORS.paleYellow);
+  wbsSetBackgrounds_(backgrounds, 1, 1, 2, 6, WBS_COLORS.metaLabel);
+  wbsSetBackgrounds_(backgrounds, 1, 7, 2, 3, WBS_COLORS.paleYellow);
   wbsSetBackgrounds_(backgrounds, 1, 11, 1, 2, WBS_COLORS.metaLabel);
   wbsSetBackgrounds_(backgrounds, 1, 14, 1, 1, WBS_COLORS.metaLabel);
   wbsSetBackgrounds_(backgrounds, 2, 11, 1, 2, WBS_COLORS.paleYellow);
@@ -514,7 +526,7 @@ function writeWbsSheet_(model) {
     });
     sheet.getRange(start, model.layout.progressCol, rows, 1).setNumberFormat('General');
     const validation = SpreadsheetApp.newDataValidation()
-      .requireValueInList(['0', '0.15', '0.3', '0.45', '0.6', '0.75', '0.9', '1'], true)
+      .requireValueInList(WBS_PROGRESS_OPTIONS, true)
       .setAllowInvalid(false)
       .build();
     sheet.getRange(start, model.layout.progressCol, rows, 1).setDataValidation(validation);
@@ -555,6 +567,7 @@ function applyWbsTemplateFormats_(sheet, model, rowCount, colCount) {
   sheet.getRange(layout.headerRow1, 1, 2, colCount)
     .setFontWeight('bold')
     .setHorizontalAlignment('center');
+  sheet.getRangeList(['C1', 'K1:L1', 'N1']).setFontWeight('bold');
   sheet.getRange(layout.headerRow1, layout.ganttStartCol, 1, model.dateColumns.length || 1).setNumberFormat('m/d');
   sheet.getRange(2, layout.planStartCol, 1, 2).setNumberFormat('yyyy/mm/dd');
   sheet.getRange(2, layout.actualStartCol, 1, 1).setNumberFormat('yyyy/mm/dd');
@@ -566,12 +579,7 @@ function applyWbsTemplateFormats_(sheet, model, rowCount, colCount) {
     })).setFontColor('#FFFFFF').setFontWeight('bold');
   }
 
-  sheet.getRange(1, 1, rowCount, layout.leftEndCol)
-    .setBorder(true, true, true, true, true, true, WBS_COLORS.border, SpreadsheetApp.BorderStyle.SOLID);
-  if (model.dateColumns.length) {
-    sheet.getRange(layout.headerRow1, layout.ganttStartCol, 2, model.dateColumns.length)
-      .setBorder(true, true, true, true, true, true, WBS_COLORS.border, SpreadsheetApp.BorderStyle.SOLID);
-  }
+  applyWbsTemplateBorders_(sheet, model);
 
   sheet.setColumnWidth(1, 45);
   sheet.setColumnWidths(layout.taskNameStartCol, layout.indentDepth, 18);
@@ -591,37 +599,60 @@ function applyWbsTemplateFormats_(sheet, model, rowCount, colCount) {
   }
 }
 
+function applyWbsTemplateBorders_(sheet, model) {
+  const layout = model.layout;
+  const style = SpreadsheetApp.BorderStyle.SOLID;
+  const color = WBS_COLORS.border;
+  function border(row, col, rows, cols, top, left, bottom, right, vertical, horizontal) {
+    sheet.getRange(row, col, rows, cols).setBorder(top, left, bottom, right, vertical, horizontal, color, style);
+  }
+
+  border(1, 1, 2, 6, true, true, true, true, false, false);
+  border(1, 7, 2, 3, true, false, true, true, false, false);
+  border(1, layout.planStartCol, 2, 2, true, true, true, true, true, true);
+  border(1, layout.actualStartCol, 2, 1, true, true, true, true, false, true);
+
+  border(layout.headerRow1, 1, 2, 1, true, true, true, true, false, false);
+  border(layout.headerRow1, layout.taskNameStartCol, 2, layout.taskDisplayCol - layout.taskNameStartCol + 1, true, true, true, true, false, false);
+  border(layout.headerRow1, layout.deliverableCol, 2, 1, true, true, true, true, false, false);
+  border(layout.headerRow1, layout.noteCol, 2, 1, true, true, true, true, false, false);
+  border(layout.headerRow1, layout.companyCol, 2, 2, true, true, true, true, true, true);
+  border(layout.headerRow1, layout.planStartCol, 1, 3, true, false, true, true, false, false);
+  border(layout.headerRow2, layout.planStartCol, 1, 3, true, true, true, true, true, false);
+  border(layout.headerRow1, layout.actualStartCol, 1, 3, true, true, true, false, false, false);
+  border(layout.headerRow2, layout.actualStartCol, 1, 3, true, true, true, false, true, false);
+  border(layout.headerRow1, layout.progressCol, 2, 1, true, true, true, true, false, false);
+  border(layout.headerRow1, layout.doneCol, 2, 1, true, false, true, true, false, false);
+  if (model.dateColumns.length) {
+    border(layout.headerRow1, layout.ganttStartCol, 2, model.dateColumns.length, true, true, true, true, true, true);
+  }
+
+  border(layout.milestoneStartRow, layout.doneCol, layout.meetingEndRow - layout.milestoneStartRow + 1, 1, false, false, false, true, false, false);
+
+  wbsRowBlocks_(model.normalRows || []).forEach(function (block) {
+    border(block.start, 1, block.count, 1, true, true, true, false, false, true);
+    border(block.start, layout.taskNameStartCol, block.count, layout.taskDisplayCol - layout.taskNameStartCol + 1, true, true, true, true, false, true);
+    border(block.start, layout.deliverableCol, block.count, 1, true, false, true, true, false, true);
+    border(block.start, layout.noteCol, block.count, layout.assigneeCol - layout.noteCol + 1, true, true, true, true, true, true);
+    border(block.start, layout.planStartCol, block.count, 3, true, true, true, true, true, true);
+    border(block.start, layout.actualStartCol, block.count, 3, true, true, true, true, true, true);
+    border(block.start, layout.progressCol, block.count, 2, true, true, true, true, true, true);
+  });
+}
+
 function buildWbsConditionalFormatRules_(sheet, model) {
   const layout = model.layout;
   const rules = [];
-  if (model.taskRows.length) {
-    const taskRows = model.taskRows.length;
-    const taskGanttRange = sheet.getRange(layout.taskStartRow, layout.ganttStartCol, taskRows, model.dateColumns.length || 1);
-    const leftTaskRange = sheet.getRange(layout.taskStartRow, 1, taskRows, layout.leftEndCol);
-    rules.push(SpreadsheetApp.newConditionalFormatRule()
-      .whenFormulaSatisfied('=AND(S$4>=$K' + layout.taskStartRow + '-0.0001,S$4<=$L' + layout.taskStartRow + '+0.0001)')
-      .setBackground(WBS_COLORS.plan)
-      .setRanges([taskGanttRange])
-      .build());
-    rules.push(SpreadsheetApp.newConditionalFormatRule()
-      .whenFormulaSatisfied('=$R' + layout.taskStartRow + '="完了"')
-      .setBackground(WBS_COLORS.completed)
-      .setRanges([leftTaskRange])
-      .build());
-  }
   if (model.dateColumns.length) {
-    const headerRange = sheet.getRange(layout.headerRow1, layout.ganttStartCol, 2, model.dateColumns.length);
     const bodyRange = sheet.getRange(layout.milestoneBodyStartRow, layout.ganttStartCol, layout.totalRows - layout.milestoneBodyStartRow + 1, model.dateColumns.length);
-    rules.push(SpreadsheetApp.newConditionalFormatRule()
-      .whenFormulaSatisfied('=WEEKDAY(S$4)=1')
-      .setBackground(WBS_COLORS.sunday)
-      .setRanges([headerRange])
-      .build());
-    rules.push(SpreadsheetApp.newConditionalFormatRule()
-      .whenFormulaSatisfied('=WEEKDAY(S$4)=7')
-      .setBackground(WBS_COLORS.saturday)
-      .setRanges([headerRange])
-      .build());
+    [layout.milestoneStartRow, layout.meetingStartRow].concat(model.sectionRows || []).forEach(function (row) {
+      rules.push(SpreadsheetApp.newConditionalFormatRule()
+        .whenFormulaSatisfied('=' + wbsColumnLetter_(layout.ganttStartCol) + '$4<>""')
+        .setBackground(WBS_COLORS.section)
+        .setFontColor('#FFFFFF')
+        .setRanges([sheet.getRange(row, layout.ganttStartCol, 1, model.dateColumns.length)])
+        .build());
+    });
     rules.push(SpreadsheetApp.newConditionalFormatRule()
       .whenFormulaSatisfied('=WEEKDAY(S$4)=1')
       .setBackground(WBS_COLORS.sunday)
@@ -633,6 +664,42 @@ function buildWbsConditionalFormatRules_(sheet, model) {
       .setBackground(WBS_COLORS.saturday)
       .setFontColor(WBS_COLORS.saturday)
       .setRanges([bodyRange])
+      .build());
+  }
+  if (model.taskRows.length) {
+    const taskRows = model.taskRows.length;
+    const taskGanttRange = sheet.getRange(layout.taskStartRow, layout.ganttStartCol, taskRows, model.dateColumns.length || 1);
+    const leftTaskRange = sheet.getRange(layout.taskStartRow, 1, taskRows, layout.leftEndCol);
+    const progressRange = sheet.getRange(layout.taskStartRow, layout.progressCol, taskRows, 1);
+    rules.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=AND(S$4>=$K' + layout.taskStartRow + '-0.0001,S$4<=$L' + layout.taskStartRow + '+0.0001)')
+      .setBackground(WBS_COLORS.plan)
+      .setRanges([taskGanttRange])
+      .build());
+    rules.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=$R' + layout.taskStartRow + '="完了"')
+      .setBackground(WBS_COLORS.completed)
+      .setRanges([leftTaskRange])
+      .build());
+    WBS_PROGRESS_COLORS.forEach(function (progress) {
+      rules.push(SpreadsheetApp.newConditionalFormatRule()
+        .whenFormulaSatisfied('=$' + wbsColumnLetter_(layout.progressCol) + layout.taskStartRow + '=' + progress.value)
+        .setBackground(progress.color)
+        .setRanges([progressRange])
+        .build());
+    });
+  }
+  if (model.dateColumns.length) {
+    const headerRange = sheet.getRange(layout.headerRow1, layout.ganttStartCol, 2, model.dateColumns.length);
+    rules.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=WEEKDAY(S$4)=1')
+      .setBackground(WBS_COLORS.sunday)
+      .setRanges([headerRange])
+      .build());
+    rules.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=WEEKDAY(S$4)=7')
+      .setBackground(WBS_COLORS.saturday)
+      .setRanges([headerRange])
       .build());
   }
   return rules;
@@ -819,6 +886,23 @@ function wbsSetBackgrounds_(backgrounds, startRow, startCol, rowCount, colCount,
   for (let row = startRow; row < startRow + rowCount; row += 1) {
     wbsSetRowBackground_(backgrounds, row, startCol, colCount, color);
   }
+}
+
+function wbsRowBlocks_(rows) {
+  const sorted = rows
+    .map(function (row) { return Number(row) || 0; })
+    .filter(function (row) { return row > 0; })
+    .sort(function (a, b) { return a - b; });
+  const blocks = [];
+  sorted.forEach(function (row) {
+    const last = blocks[blocks.length - 1];
+    if (last && last.start + last.count === row) {
+      last.count += 1;
+      return;
+    }
+    blocks.push({ start: row, count: 1 });
+  });
+  return blocks;
 }
 
 function wbsEmptyMatrix_(rows, cols, value) {

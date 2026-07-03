@@ -71,6 +71,14 @@ test('template layout keeps management columns fixed and places deep task names'
   assert.equal(wbsColumnLetter_(model.layout.ganttStartCol), 'S');
   const deepest = model.taskRows.find(row => row.node.NodeId === 'c1a1');
   assert.equal(model.values[deepest.sheetRow - 1][4], 'C-1-a-1');
+  assert.equal(model.backgrounds[0][0], '#D9D9D9');
+  assert.equal(model.backgrounds[1][5], '#D9D9D9');
+  assert.equal(model.backgrounds[0][8], '#FFFFDD');
+  assert.equal(model.backgrounds[1][8], '#FFFFDD');
+  assert.equal(model.backgrounds[0][9], '#FFFFFF');
+  assert.equal(model.backgrounds[0][10], '#D9D9D9');
+  assert.equal(model.backgrounds[1][10], '#FFFFDD');
+  assert.equal(model.backgrounds[2][0], '#FFFFFF');
   assert.equal(model.values[model.layout.headerRow2 - 1][0], 'No.');
   assert.equal(model.values[model.layout.headerRow2 - 1][5], 'タスク');
   assert.equal(model.values[model.layout.headerRow2 - 1][17], '完了フラグ');
