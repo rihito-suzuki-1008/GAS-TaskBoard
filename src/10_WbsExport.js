@@ -518,18 +518,20 @@ function writeWbsSheet_(model) {
   sheet.getRange(1, 1, rowCount, colCount).setBackgrounds(model.backgrounds);
   applyWbsTemplateFormats_(sheet, model, rowCount, colCount);
 
-  if (model.taskRows.length) {
-    const start = model.layout.taskStartRow;
-    const rows = model.taskRows.length;
-    [model.layout.planStartCol, model.layout.planEndCol, model.layout.actualStartCol, model.layout.actualEndCol].forEach(function (col) {
-      sheet.getRange(start, col, rows, 1).setNumberFormat('yyyy/mm/dd');
-    });
-    sheet.getRange(start, model.layout.progressCol, rows, 1).setNumberFormat('General');
+  const normalBlocks = wbsRowBlocks_(model.normalRows || []);
+  if (normalBlocks.length) {
     const validation = SpreadsheetApp.newDataValidation()
       .requireValueInList(WBS_PROGRESS_OPTIONS, true)
       .setAllowInvalid(false)
       .build();
-    sheet.getRange(start, model.layout.progressCol, rows, 1).setDataValidation(validation);
+    normalBlocks.forEach(function (block) {
+      [model.layout.planStartCol, model.layout.planEndCol, model.layout.actualStartCol, model.layout.actualEndCol].forEach(function (col) {
+        sheet.getRange(block.start, col, block.count, 1).setNumberFormat('yyyy/mm/dd');
+      });
+      sheet.getRange(block.start, model.layout.progressCol, block.count, 1)
+        .setNumberFormat('General')
+        .setDataValidation(validation);
+    });
   }
 
   sheet.setConditionalFormatRules(buildWbsConditionalFormatRules_(sheet, model));
@@ -607,32 +609,31 @@ function applyWbsTemplateBorders_(sheet, model) {
     sheet.getRange(row, col, rows, cols).setBorder(top, left, bottom, right, vertical, horizontal, color, style);
   }
 
-  border(1, 1, 2, 6, true, true, true, true, false, false);
-  border(1, 7, 2, 3, true, false, true, true, false, false);
+  border(1, 1, 2, 6, true, true, true, true, null, null);
+  border(1, 7, 2, 3, true, null, true, true, null, null);
   border(1, layout.planStartCol, 2, 2, true, true, true, true, true, true);
-  border(1, layout.actualStartCol, 2, 1, true, true, true, true, false, true);
+  border(1, layout.actualStartCol, 2, 1, true, true, true, true, null, true);
 
-  border(layout.headerRow1, 1, 2, 1, true, true, true, true, false, false);
-  border(layout.headerRow1, layout.taskNameStartCol, 2, layout.taskDisplayCol - layout.taskNameStartCol + 1, true, true, true, true, false, false);
-  border(layout.headerRow1, layout.deliverableCol, 2, 1, true, true, true, true, false, false);
-  border(layout.headerRow1, layout.noteCol, 2, 1, true, true, true, true, false, false);
+  border(layout.headerRow1, 1, 2, 1, true, true, true, true, null, null);
+  border(layout.headerRow1, layout.taskNameStartCol, 2, layout.taskDisplayCol - layout.taskNameStartCol + 1, true, true, true, true, null, null);
+  border(layout.headerRow1, layout.deliverableCol, 2, 1, true, true, true, true, null, null);
+  border(layout.headerRow1, layout.noteCol, 2, 1, true, true, true, true, null, null);
   border(layout.headerRow1, layout.companyCol, 2, 2, true, true, true, true, true, true);
-  border(layout.headerRow1, layout.planStartCol, 1, 3, true, false, true, true, false, false);
-  border(layout.headerRow2, layout.planStartCol, 1, 3, true, true, true, true, true, false);
-  border(layout.headerRow1, layout.actualStartCol, 1, 3, true, true, true, false, false, false);
-  border(layout.headerRow2, layout.actualStartCol, 1, 3, true, true, true, false, true, false);
-  border(layout.headerRow1, layout.progressCol, 2, 1, true, true, true, true, false, false);
-  border(layout.headerRow1, layout.doneCol, 2, 1, true, false, true, true, false, false);
+  border(layout.headerRow1, layout.planStartCol, 1, 3, true, null, true, true, null, null);
+  border(layout.headerRow2, layout.planStartCol, 1, 3, true, true, true, true, true, null);
+  border(layout.headerRow1, layout.actualStartCol, 1, 3, true, true, true, null, null, null);
+  border(layout.headerRow2, layout.actualStartCol, 1, 3, true, true, true, null, true, null);
+  border(layout.headerRow1, layout.progressCol, 2, 2, true, true, true, true, true, null);
   if (model.dateColumns.length) {
     border(layout.headerRow1, layout.ganttStartCol, 2, model.dateColumns.length, true, true, true, true, true, true);
   }
 
-  border(layout.milestoneStartRow, layout.doneCol, layout.meetingEndRow - layout.milestoneStartRow + 1, 1, false, false, false, true, false, false);
+  border(layout.milestoneStartRow, layout.doneCol, layout.meetingEndRow - layout.milestoneStartRow + 1, 1, null, null, null, true, null, null);
 
   wbsRowBlocks_(model.normalRows || []).forEach(function (block) {
-    border(block.start, 1, block.count, 1, true, true, true, false, false, true);
-    border(block.start, layout.taskNameStartCol, block.count, layout.taskDisplayCol - layout.taskNameStartCol + 1, true, true, true, true, false, true);
-    border(block.start, layout.deliverableCol, block.count, 1, true, false, true, true, false, true);
+    border(block.start, 1, block.count, 1, true, true, true, null, null, true);
+    border(block.start, layout.taskNameStartCol, block.count, layout.taskDisplayCol - layout.taskNameStartCol + 1, true, true, true, true, null, true);
+    border(block.start, layout.deliverableCol, block.count, 1, true, null, true, true, null, true);
     border(block.start, layout.noteCol, block.count, layout.assigneeCol - layout.noteCol + 1, true, true, true, true, true, true);
     border(block.start, layout.planStartCol, block.count, 3, true, true, true, true, true, true);
     border(block.start, layout.actualStartCol, block.count, 3, true, true, true, true, true, true);
@@ -670,7 +671,9 @@ function buildWbsConditionalFormatRules_(sheet, model) {
     const taskRows = model.taskRows.length;
     const taskGanttRange = sheet.getRange(layout.taskStartRow, layout.ganttStartCol, taskRows, model.dateColumns.length || 1);
     const leftTaskRange = sheet.getRange(layout.taskStartRow, 1, taskRows, layout.leftEndCol);
-    const progressRange = sheet.getRange(layout.taskStartRow, layout.progressCol, taskRows, 1);
+    const progressRanges = wbsRowBlocks_(model.normalRows || []).map(function (block) {
+      return sheet.getRange(block.start, layout.progressCol, block.count, 1);
+    });
     rules.push(SpreadsheetApp.newConditionalFormatRule()
       .whenFormulaSatisfied('=AND(S$4>=$K' + layout.taskStartRow + '-0.0001,S$4<=$L' + layout.taskStartRow + '+0.0001)')
       .setBackground(WBS_COLORS.plan)
@@ -681,13 +684,15 @@ function buildWbsConditionalFormatRules_(sheet, model) {
       .setBackground(WBS_COLORS.completed)
       .setRanges([leftTaskRange])
       .build());
-    WBS_PROGRESS_COLORS.forEach(function (progress) {
-      rules.push(SpreadsheetApp.newConditionalFormatRule()
-        .whenFormulaSatisfied('=$' + wbsColumnLetter_(layout.progressCol) + layout.taskStartRow + '=' + progress.value)
-        .setBackground(progress.color)
-        .setRanges([progressRange])
-        .build());
-    });
+    if (progressRanges.length) {
+      WBS_PROGRESS_COLORS.forEach(function (progress) {
+        rules.push(SpreadsheetApp.newConditionalFormatRule()
+          .whenNumberEqualTo(progress.value)
+          .setBackground(progress.color)
+          .setRanges(progressRanges)
+          .build());
+      });
+    }
   }
   if (model.dateColumns.length) {
     const headerRange = sheet.getRange(layout.headerRow1, layout.ganttStartCol, 2, model.dateColumns.length);
