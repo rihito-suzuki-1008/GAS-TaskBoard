@@ -123,3 +123,22 @@ test('deriveActuals uses first activity and last done snapshot only for current 
   assert.deepEqual(actuals.n1, { startDate: '2026-07-02', endDate: '2026-07-05' });
   assert.deepEqual(actuals.n2, { startDate: '2026-07-06', endDate: '' });
 });
+
+test('WBS progress output floors derived parent progress to valid options', () => {
+  const rows = baseRows();
+  rows.nodes = [
+    { NodeId: 'root', ParentId: '', Name: '案件', StatusColumnId: 'todo', SortOrder: 1000 },
+    { NodeId: 'phase', ParentId: 'root', Name: 'Phase', StatusColumnId: 'todo', SortOrder: 1000, StartDate: '2026-07-01', EndDate: '2026-07-03' },
+    { NodeId: 'parent', ParentId: 'phase', Name: 'Parent', StatusColumnId: 'todo', SortOrder: 1000, StartDate: '2026-07-01', EndDate: '2026-07-03' },
+    { NodeId: 'leaf1', ParentId: 'parent', Name: 'Leaf 1', StatusColumnId: 'todo', SortOrder: 1000, Progress: 90, StartDate: '2026-07-01', EndDate: '2026-07-01' },
+    { NodeId: 'leaf2', ParentId: 'parent', Name: 'Leaf 2', StatusColumnId: 'done', SortOrder: 2000, Progress: 100, StartDate: '2026-07-02', EndDate: '2026-07-02' }
+  ];
+  const model = buildWbsModel_(rows, {
+    actorName: '佐藤',
+    now: '2026-07-03T00:00:00.000Z',
+    createdAt: '2026-07-03T00:00:00.000Z',
+    version: 1
+  });
+  const parentRow = model.taskRows.find(row => row.node.NodeId === 'parent');
+  assert.equal(model.values[parentRow.sheetRow - 1][model.layout.progressCol - 1], 0.9);
+});

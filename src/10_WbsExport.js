@@ -489,7 +489,7 @@ function fillWbsTasks_(values, backgrounds, layout, context) {
     matrixRow[layout.actualStartCol - 1] = actual.startDate ? wbsDateValue_(actual.startDate) : '';
     matrixRow[layout.actualEndCol - 1] = actual.endDate ? wbsDateValue_(actual.endDate) : '';
     matrixRow[layout.actualDaysCol - 1] = wbsDaysFormula_(sheetRow, layout.actualStartCol, layout.actualEndCol);
-    matrixRow[layout.progressCol - 1] = (Number(context.progressByNodeId[nodeId]) || 0) / 100;
+    matrixRow[layout.progressCol - 1] = wbsProgressBucket_(context.progressByNodeId[nodeId]) / 100;
     matrixRow[layout.doneCol - 1] = '=IF(' + wbsA1_(sheetRow, layout.progressCol) + '=1, "完了", "")';
 
     context.dateRange.dateColumns.forEach(function (_date, dateIndex) {
@@ -1027,6 +1027,13 @@ function wbsValidProgress_(value) {
   }
   const numeric = Number(value);
   return [0, 15, 30, 45, 60, 75, 90, 100].indexOf(numeric) !== -1 ? numeric : null;
+}
+
+function wbsProgressBucket_(value) {
+  const numeric = Math.max(0, Math.min(100, Number(value) || 0));
+  return [0, 15, 30, 45, 60, 75, 90, 100].reduce(function (best, candidate) {
+    return candidate <= numeric + 0.000001 ? candidate : best;
+  }, 0);
 }
 
 function wbsHasSchedule_(node) {

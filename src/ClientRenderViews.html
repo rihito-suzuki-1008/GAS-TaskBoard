@@ -481,22 +481,27 @@
               ${state.savingNodeIds.has(node.id) ? '<span class="saving-dot inline"></span>' : ''}
             </div>
           </td>
-          <td>${renderDropdown({ scope: inlineScope, field: 'statusColumnId', selected: node.statusColumnId, options: state.statusColumns.map(column => ({ value: column.id, label: column.name, color: column.color || defaultStatusColor(column) })) })}</td>
-          <td>${renderDropdown({ scope: inlineScope, field: 'assigneeIds', selected: node.assigneeIds, multi: true, placeholder: '未割当', options: state.members.map(member => ({ value: member.id, label: member.name, avatar: member })) })}</td>
-          <td>${renderDropdown({ scope: inlineScope, field: 'priority', selected: node.priority, options: priorityOptions() })}</td>
+          <td>${renderDropdown({ scope: inlineScope, field: 'statusColumnId', selected: node.statusColumnId, plain: true, triggerHtml: renderStatusChip(node.statusColumnId), options: state.statusColumns.map(column => ({ value: column.id, label: column.name, color: column.color || defaultStatusColor(column) })) })}</td>
+          <td>${renderDropdown({ scope: inlineScope, field: 'assigneeIds', selected: node.assigneeIds, multi: true, plain: true, triggerHtml: renderAvatars(node.assigneeIds), placeholder: '未割当', options: state.members.map(member => ({ value: member.id, label: member.name, avatar: member })) })}</td>
+          <td>${renderDropdown({ scope: inlineScope, field: 'priority', selected: node.priority, plain: true, triggerHtml: `<span class="chip">${h(priorityLabel(node.priority))}</span>`, options: priorityOptions() })}</td>
           <td>
             <div class="inline-date-range">
-              ${renderDatePicker({ scope: inlineScope, field: 'startDate', selected: node.startDate, endDate: node.endDate, placeholder: '開始' })}
-              ${renderDatePicker({ scope: inlineScope, field: 'endDate', selected: node.endDate, startDate: node.startDate, minDate: node.startDate, placeholder: '終了' })}
+              ${renderDatePicker({ scope: inlineScope, field: 'startDate', selected: node.startDate, endDate: node.endDate, placeholder: '開始', plain: true, triggerHtml: renderInlineDateBadge(node.startDate, '開始', '') })}
+              ${renderDatePicker({ scope: inlineScope, field: 'endDate', selected: node.endDate, startDate: node.startDate, minDate: node.startDate, placeholder: '終了', plain: true, triggerHtml: renderInlineDateBadge(node.endDate, '終了', dueClass(node.endDate)) })}
             </div>
           </td>
           <td>
             ${node.hasChildren
               ? `<span class="progress-pill" style="--progress-color:${h(progressTone)}">${Math.round(node.progress)}%</span>`
-              : renderDropdown({ scope: inlineScope, field: 'progress', selected: String(progressValue), options: progressOptions() })}
+              : renderDropdown({ scope: inlineScope, field: 'progress', selected: String(progressValue), plain: true, triggerHtml: `<span class="progress-pill" style="--progress-color:${h(progressTone)}">${progressValue}%</span>`, options: progressOptions() })}
           </td>
         </tr>
       `;
+    }
+
+    function renderInlineDateBadge(dateText, placeholder, toneClass) {
+      const label = dateText ? shortDate(dateText) : placeholder;
+      return `<span class="due-badge inline-date-badge ${h(toneClass || '')}">${h(label)}</span>`;
     }
 
     function inlineProgressValue(node) {
@@ -530,8 +535,11 @@
     function renderGantt() {
       const displayRows = visibleTreeNodes();
       const scale = ganttScale(displayRows);
+      const timelineRows = ganttTimelineRows();
+      const timelineHeight = timelineRows.length * GANTT_ROW_HEIGHT;
       const emptyLaneCount = Math.max(10, Math.ceil((18 - displayRows.length) / 1));
-      const height = Math.max((displayRows.length + emptyLaneCount) * GANTT_ROW_HEIGHT, 480);
+      const taskHeight = Math.max((displayRows.length + emptyLaneCount) * GANTT_ROW_HEIGHT, 480);
+      const height = timelineHeight + taskHeight;
       const today = localTodayDay();
       const todayLeft = (today - scale.startDay) * scale.dayWidth;
       const activeScale = nearestGanttScaleFactor(state.ganttScaleFactor);
@@ -553,12 +561,15 @@
               </div>
             </div>
             <button class="button primary compact" type="button" data-action="create-child-shell" data-parent-id="${h(state.rootId)}">${icon('plus')}タスクを追加</button>
+            <button class="button secondary compact" type="button" data-action="project-settings" data-tab="milestones">マイルストーン</button>
+            <button class="button secondary compact" type="button" data-action="project-settings" data-tab="meetings">会議体</button>
             <button class="button secondary compact" type="button" data-action="gantt-jump-today">今日へ</button>
           </div>
           <div class="gantt-frame" style="--gantt-tree-width:${treeWidth}px">
             <div class="gantt-left">
               <div class="gantt-axis-left"><span>タスク名</span><span>日付範囲</span><span>日数</span></div>
               <div class="gantt-left-body" style="height:${height}px">
+                ${timelineRows.map(renderGanttTimelineTreeRow).join('')}
                 ${displayRows.map(renderGanttTreeRow).join('')}
               </div>
             </div>
@@ -567,14 +578,48 @@
               <div class="gantt-axis" style="width:${scale.width}px">${renderAxisTicks(scale)}</div>
               <div class="gantt-canvas" style="width:${scale.width}px;height:${height}px;--day-width:${scale.dayWidth}px">
                 ${renderWeekendBands(scale, height)}
-                ${renderGanttInteractionRows(displayRows, emptyLaneCount)}
+                ${renderGanttTimelineRows(timelineRows, scale)}
+                ${renderGanttInteractionRows(displayRows, emptyLaneCount, timelineHeight)}
                 ${todayLeft >= 0 && todayLeft <= scale.width ? `<div class="today-column" style="left:${todayLeft}px;width:${scale.dayWidth}px;height:${height}px"></div>` : ''}
-                ${renderGanttArrows(displayRows, scale, height)}
-                ${displayRows.map((node, index) => renderGanttBar(node, index, scale)).join('')}
+                ${renderGanttArrows(displayRows, scale, height, timelineHeight)}
+                ${displayRows.map((node, index) => renderGanttBar(node, index, scale, timelineHeight)).join('')}
               </div>
             </div>
           </div>
         </section>
+      `;
+    }
+
+    function renderGanttTimelineTreeRow(row) {
+      return `
+        <div class="gantt-tree-row gantt-timeline-tree-row">
+          <div class="gantt-tree-main"><span class="timeline-row-label">${h(row.label)}</span></div>
+          <div class="gantt-tree-meta">${h(row.countLabel)}</div>
+          <div class="gantt-tree-meta"></div>
+        </div>
+      `;
+    }
+
+    function renderGanttTimelineRows(rows, scale) {
+      return rows.map((row, index) => {
+        const top = index * GANTT_ROW_HEIGHT;
+        return `
+          <div class="gantt-row gantt-timeline-row" style="top:${top}px">
+            ${row.markers.map(marker => renderGanttTimelineMarker(marker, scale)).join('')}
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderGanttTimelineMarker(marker, scale) {
+      const day = dateToDay(marker.date);
+      const left = (day - scale.startDay) * scale.dayWidth;
+      if (!Number.isFinite(day) || left < -120 || left > scale.width + 120) return '';
+      return `
+        <span class="gantt-timeline-marker ${h(marker.kind)}" style="left:${left}px" title="${h(marker.label)} ${h(marker.date)}">
+          <span class="marker-pin">▼</span>
+          <span class="marker-label">${h(marker.label)}</span>
+        </span>
       `;
     }
 
@@ -598,9 +643,10 @@
       `;
     }
 
-    function renderGanttInteractionRows(displayRows, emptyLaneCount) {
+    function renderGanttInteractionRows(displayRows, emptyLaneCount, topOffset) {
+      topOffset = Number(topOffset) || 0;
       const rowsHtml = displayRows.map((node, index) => {
-        const top = index * GANTT_ROW_HEIGHT;
+        const top = topOffset + index * GANTT_ROW_HEIGHT;
         const nodeAttr = `data-gantt-row-node="${h(node.id)}"`;
         if (!node.startDate && !node.endDate) {
           return `<div class="gantt-row create-target schedule-target" ${nodeAttr} data-gantt-schedule-node="${h(node.id)}" data-gantt-row-top="${top}" style="top:${top}px"><span class="gantt-row-hint">ドラッグして日程を設定</span></div>`;
@@ -611,7 +657,7 @@
         return `<div class="gantt-row" ${nodeAttr} style="top:${top}px"></div>`;
       });
       for (let i = 0; i < emptyLaneCount; i += 1) {
-        const top = (displayRows.length + i) * GANTT_ROW_HEIGHT;
+        const top = topOffset + (displayRows.length + i) * GANTT_ROW_HEIGHT;
         rowsHtml.push(`
           <div class="gantt-row create-target empty-lane" data-gantt-create-parent="${h(state.rootId)}" data-gantt-row-top="${top}" style="top:${top}px">
             ${i === 0 ? '<span class="gantt-empty-lane-label">ドラッグしてタスクを追加</span>' : ''}
@@ -687,7 +733,7 @@
       return bands.join('');
     }
 
-    function renderGanttBar(node, index, scale) {
+    function renderGanttBar(node, index, scale, topOffset) {
       const start = node.displayStartDate;
       const end = node.displayEndDate;
       if (!start || !end) return '';
@@ -695,8 +741,9 @@
       const width = Math.max(24, (dateToDay(end) - dateToDay(start) + 1) * scale.dayWidth);
       const canDrag = Boolean(node.startDate && node.endDate);
       const barColor = statusColor(node.statusColumnId);
+      const top = (Number(topOffset) || 0) + index * GANTT_ROW_HEIGHT + 8;
       return `
-        <div class="gantt-bar ${state.shellNodeId === node.id ? 'shell-node-bar' : ''} ${canDrag ? '' : 'readonly'}" data-gantt-bar="${h(node.id)}" style="left:${left}px;top:${index * GANTT_ROW_HEIGHT + 8}px;width:${width}px;--gantt-status-color:${h(barColor)}">
+        <div class="gantt-bar ${state.shellNodeId === node.id ? 'shell-node-bar' : ''} ${canDrag ? '' : 'readonly'}" data-gantt-bar="${h(node.id)}" style="left:${left}px;top:${top}px;width:${width}px;--gantt-status-color:${h(barColor)}">
           ${state.savingNodeIds.has(node.id) ? '<span class="saving-dot"></span>' : ''}
           ${canDrag ? '<span class="bar-handle left" data-handle="left"></span>' : ''}
           <span class="gantt-label">${h(node.name || '新しいタスク')}</span>
@@ -705,7 +752,8 @@
       `;
     }
 
-    function renderGanttArrows(displayRows, scale, height) {
+    function renderGanttArrows(displayRows, scale, height, topOffset) {
+      topOffset = Number(topOffset) || 0;
       const rowIndex = new Map();
       displayRows.forEach((node, index) => rowIndex.set(node.id, index));
       const visible = new Set(Array.from(rowIndex.keys()));
@@ -718,8 +766,8 @@
         if (!from || !to || !from.displayEndDate || !to.displayStartDate || !rowIndex.has(fromId) || !rowIndex.has(toId)) return;
         const x1 = (dateToDay(from.displayEndDate) - scale.startDay + 1) * scale.dayWidth + 2;
         const x2 = (dateToDay(to.displayStartDate) - scale.startDay) * scale.dayWidth - 2;
-        const y1 = rowIndex.get(fromId) * GANTT_ROW_HEIGHT + 20;
-        const y2 = rowIndex.get(toId) * GANTT_ROW_HEIGHT + 20;
+        const y1 = topOffset + rowIndex.get(fromId) * GANTT_ROW_HEIGHT + 20;
+        const y2 = topOffset + rowIndex.get(toId) * GANTT_ROW_HEIGHT + 20;
         const mid = Math.max(x1 + 16, (x1 + x2) / 2);
         paths.push(`<path d="M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}" fill="none" stroke="var(--color-text-tertiary)" stroke-width="1.5" marker-end="url(#arrow)"></path>`);
       });

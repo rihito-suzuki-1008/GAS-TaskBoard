@@ -635,11 +635,12 @@
       const label = config.multi
         ? renderMultiValue(selectedOptions, config.placeholder)
         : renderSingleValue(selectedOptions[0], config.placeholder);
+      const triggerClass = `dropdown-trigger${config.plain ? ' inline-display-trigger' : ''}`;
       return `
         <div class="dropdown" data-dropdown="${h(id)}" data-scope="${h(scope)}" data-field="${h(field)}" data-multi="${config.multi ? 'true' : 'false'}">
-          <button class="dropdown-trigger" type="button" data-dropdown-trigger="${h(id)}" ${config.disabled ? 'disabled' : ''} aria-haspopup="listbox" aria-expanded="${state.openDropdown === id ? 'true' : 'false'}">
-            <span class="dropdown-value">${label}</span>
-            <span class="dropdown-chevron">${icon('chevron-down')}</span>
+          <button class="${triggerClass}" type="button" data-dropdown-trigger="${h(id)}" ${config.disabled ? 'disabled' : ''} aria-haspopup="listbox" aria-expanded="${state.openDropdown === id ? 'true' : 'false'}">
+            <span class="dropdown-value">${config.triggerHtml || label}</span>
+            ${config.plain ? '' : `<span class="dropdown-chevron">${icon('chevron-down')}</span>`}
           </button>
           ${state.openDropdown === id ? `
             <div class="dropdown-menu" role="listbox">
@@ -661,11 +662,12 @@
         : selected
           ? formatShortRange(selected, selected)
           : `<span class="dropdown-placeholder">${h(config.placeholder || '未設定')}</span>`;
+      const triggerClass = `dropdown-trigger${config.plain ? ' inline-display-trigger' : ''}`;
       return `
         <div class="dropdown date-picker" data-dropdown="${h(id)}" data-scope="${h(scope)}" data-field="${h(field)}">
-          <button class="dropdown-trigger" type="button" data-dropdown-trigger="${h(id)}" aria-haspopup="dialog" aria-expanded="${state.openDropdown === id ? 'true' : 'false'}">
-            <span class="dropdown-value">${label}</span>
-            <span class="dropdown-chevron">${icon('chevron-down')}</span>
+          <button class="${triggerClass}" type="button" data-dropdown-trigger="${h(id)}" aria-haspopup="dialog" aria-expanded="${state.openDropdown === id ? 'true' : 'false'}">
+            <span class="dropdown-value">${config.triggerHtml || label}</span>
+            ${config.plain ? '' : `<span class="dropdown-chevron">${icon('chevron-down')}</span>`}
           </button>
           ${state.openDropdown === id ? renderCalendarPanel(id, config) : ''}
         </div>

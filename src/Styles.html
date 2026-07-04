@@ -606,6 +606,27 @@
       color: var(--color-text-primary);
     }
 
+    .inline-display-trigger {
+      width: max-content;
+      max-width: 100%;
+      min-height: 26px;
+      justify-content: flex-start;
+      border-color: transparent;
+      background: transparent;
+      padding: 0;
+      box-shadow: none;
+    }
+
+    .inline-display-trigger:hover,
+    .inline-display-trigger[aria-expanded="true"] {
+      border-color: transparent;
+      background: transparent;
+    }
+
+    .inline-display-trigger .dropdown-value {
+      max-width: 100%;
+    }
+
     .calendar-menu {
       width: 304px;
       max-width: min(304px, calc(100vw - var(--space-6)));
@@ -1253,8 +1274,9 @@
     }
 
     .inline-date-range {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr);
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
       gap: var(--space-1);
     }
 
@@ -1264,8 +1286,21 @@
       padding: var(--space-1) var(--space-2);
     }
 
+    td .inline-display-trigger {
+      min-height: 26px;
+      padding: 0;
+      border-color: transparent;
+      background: transparent;
+    }
+
     td .dropdown-menu {
       z-index: 32;
+    }
+
+    .inline-date-badge {
+      color: var(--color-text-secondary);
+      background: transparent;
+      padding-inline: var(--space-1);
     }
 
     .task-dragging {
@@ -1581,6 +1616,11 @@
       animation: shellRowGrow var(--duration-drawer) var(--ease-standard);
     }
 
+    .gantt-timeline-tree-row {
+      background: color-mix(in srgb, var(--color-canvas) 72%, var(--color-surface));
+      font-weight: var(--weight-medium);
+    }
+
     .gantt-tree-main {
       min-width: 0;
       display: flex;
@@ -1664,6 +1704,57 @@
 
     .gantt-row.schedule-target:hover .gantt-row-hint {
       opacity: 1;
+    }
+
+    .gantt-timeline-row {
+      background-color: color-mix(in srgb, var(--color-canvas) 72%, var(--color-surface));
+      z-index: 2;
+    }
+
+    .gantt-timeline-marker {
+      position: absolute;
+      top: 5px;
+      transform: translateX(-50%);
+      max-width: 180px;
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-1);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-pill);
+      background: var(--color-surface);
+      color: var(--color-text-primary);
+      box-shadow: var(--shadow-sm);
+      padding: 0 var(--space-2);
+      font-size: var(--text-xs);
+      line-height: 24px;
+      white-space: nowrap;
+      overflow: hidden;
+      z-index: 4;
+    }
+
+    .gantt-timeline-marker.milestone {
+      border-color: color-mix(in srgb, var(--color-warning) 42%, var(--color-border));
+      background: color-mix(in srgb, var(--color-warning-subtle) 72%, var(--color-surface));
+    }
+
+    .gantt-timeline-marker.meeting {
+      border-color: color-mix(in srgb, var(--color-accent) 36%, var(--color-border));
+      background: color-mix(in srgb, var(--color-accent-subtle) 76%, var(--color-surface));
+    }
+
+    .marker-pin {
+      color: var(--color-warning);
+      font-size: 10px;
+    }
+
+    .gantt-timeline-marker.meeting .marker-pin {
+      color: var(--color-accent);
+    }
+
+    .marker-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .gantt-row.empty-lane {

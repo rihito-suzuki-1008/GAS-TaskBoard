@@ -930,6 +930,9 @@
         state.openDropdown = '';
         state.focusDetailName = false;
       }
+      if (options.closeAfter && !options.createNext && !wasShell && state.drawerNodeId === node.id) {
+        closeDrawer({ skipShellCleanup: true });
+      }
       return saveNodePatch(node.id, patch, () => {
         applyLocalNodePatch(node, patch);
       }, {
@@ -940,9 +943,6 @@
           if (options.createNext) {
             createChildShell(parentId);
             return;
-          }
-          if (options.closeAfter && state.drawerNodeId === node.id) {
-            closeDrawer({ skipShellCleanup: true });
           }
         },
         onError: () => {

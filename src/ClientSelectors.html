@@ -123,7 +123,10 @@
     function ganttScale(rows) {
       const scheduled = rows.filter(node => node.displayStartDate && node.displayEndDate);
       const today = localTodayDay();
-      const scaleDays = scheduled.flatMap(node => [dateToDay(node.displayStartDate), dateToDay(node.displayEndDate)]).concat(today);
+      const scaleDays = scheduled
+        .flatMap(node => [dateToDay(node.displayStartDate), dateToDay(node.displayEndDate)])
+        .concat(ganttTimelineMarkerDates())
+        .concat(today);
       const filterRange = dateFilterRange();
       if (filterRange) scaleDays.push(filterRange.start, filterRange.end);
       let startDay = Math.min(...scaleDays);
@@ -139,6 +142,46 @@
       const scaleFactor = nearestGanttScaleFactor(state.ganttScaleFactor);
       const dayWidth = Math.max(3, Math.round(baseDayWidth * scaleFactor));
       return { startDay, endDay, dayWidth, width: Math.max(900, (endDay - startDay + 1) * dayWidth) };
+    }
+
+    function ganttTimelineRows() {
+      const milestoneMarkers = state.milestones
+        .filter(item => isDateText(item.date))
+        .map(item => ({ kind: 'milestone', date: item.date, label: item.name || 'マイルストーン' }));
+      const meetingMarkers = state.meetings.flatMap(item => (
+        meetingMarkerDates(item).map(date => ({ kind: 'meeting', date, label: item.name || '会議体' }))
+      ));
+      const rows = [];
+      if (milestoneMarkers.length) {
+        rows.push({ label: 'マイルストーン', countLabel: `${milestoneMarkers.length}件`, markers: milestoneMarkers });
+      }
+      if (meetingMarkers.length) {
+        rows.push({ label: '会議体', countLabel: `${meetingMarkers.length}件`, markers: meetingMarkers });
+      }
+      return rows;
+    }
+
+    function ganttTimelineMarkerDates() {
+      return ganttTimelineRows()
+        .flatMap(row => row.markers.map(marker => dateToDay(marker.date)))
+        .filter(day => Number.isFinite(day));
+    }
+
+    function meetingMarkerDates(meeting) {
+      const text = [meeting.name, meeting.schedule, meeting.note].map(value => value || '').join(' ');
+      const seen = new Set();
+      return (text.match(/\d{4}-\d{2}-\d{2}/g) || []).filter(date => {
+        if (!isDateText(date) || seen.has(date)) return false;
+        seen.add(date);
+        return true;
+      });
+    }
+
+    function isDateText(value) {
+      const text = String(value || '');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+      const day = dateToDay(text);
+      return Number.isFinite(day) && dayToDate(day) === text;
     }
 
     function addMonthDay(day) {

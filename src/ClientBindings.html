@@ -515,7 +515,7 @@
         return;
       }
       if (action === 'members') return openMembersDialog();
-      if (action === 'project-settings') return openProjectSettingsDialog();
+      if (action === 'project-settings') return openProjectSettingsDialog(event.currentTarget.dataset.tab);
       if (action === 'project-settings-tab') return switchProjectSettingsTab(event.currentTarget.dataset.tab);
       if (action === 'save-project-setting') return saveProjectSettingsDraft();
       if (action === 'clear-project-setting') return clearProjectSettingsDraft();
