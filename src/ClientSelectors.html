@@ -148,9 +148,15 @@
       if (state.ganttTimelineCollapsed || !scale) return [];
       const milestoneMarkers = state.milestones
         .filter(item => isDateText(item.date))
-        .map(item => ({ kind: 'milestone', date: item.date, label: item.name || 'マイルストーン' }));
+        .map(item => ({ kind: 'milestone', date: item.date, label: item.name || 'マイルストーン', tooltip: `${item.name || 'マイルストーン'}\n${item.date}` }));
       const meetingMarkers = state.meetings.flatMap(item => (
-        meetingMarkerDates(item, scale.startDay, scale.endDay).map(date => ({ kind: 'meeting', date, label: item.name || '会議体', compact: true }))
+        meetingMarkerDates(item, scale.startDay, scale.endDay).map(date => ({
+          kind: 'meeting',
+          date,
+          label: item.name || '会議体',
+          compact: true,
+          tooltip: meetingMarkerTooltip(item, date)
+        }))
       ));
       return timelineLaneRows('マイルストーン', milestoneMarkers, scale)
         .concat(timelineLaneRows('会議体', meetingMarkers, scale));
@@ -197,6 +203,15 @@
 
     function timelineMarkerAnchorOffset() {
       return 12;
+    }
+
+    function meetingMarkerTooltip(meeting, date) {
+      return [
+        meeting.name || '会議体',
+        date,
+        meetingScheduleSummary(meeting),
+        meeting.note || ''
+      ].filter(Boolean).join('\n');
     }
 
     function meetingMarkerDates(meeting, startDay, endDay) {

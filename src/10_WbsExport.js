@@ -288,8 +288,9 @@ function buildWbsModel_(rows, options) {
   });
   const values = wbsEmptyMatrix_(layout.totalRows, layout.totalCols, '');
   const backgrounds = wbsEmptyMatrix_(layout.totalRows, layout.totalCols, WBS_COLORS.white);
+  const notes = wbsEmptyMatrix_(layout.totalRows, layout.totalCols, '');
 
-  fillWbsStaticSections_(values, backgrounds, layout, {
+  fillWbsStaticSections_(values, backgrounds, notes, layout, {
     root: root,
     visibleRows: visibleRows,
     derived: derivedState.derived,
@@ -310,6 +311,7 @@ function buildWbsModel_(rows, options) {
   return {
     values: values,
     backgrounds: backgrounds,
+    notes: notes,
     layout: layout,
     taskRows: visibleRows,
     dateColumns: dateRange.dateColumns,
@@ -463,7 +465,7 @@ function buildWbsDateRange_(visibleRows, derived, options, milestones, meetings)
   return { startDay: startDay, endDay: endDay, dateColumns: dateColumns, warning: warning };
 }
 
-function fillWbsStaticSections_(values, backgrounds, layout, context) {
+function fillWbsStaticSections_(values, backgrounds, notes, layout, context) {
   const rootName = wbsClean_(wbsGet_(context.root, 'Name', 'name')) || 'プロジェクト';
   const nowDate = wbsClean_(context.options.now).slice(0, 10) || wbsTodayText_();
   const plannedStarts = [];
@@ -544,7 +546,9 @@ function fillWbsStaticSections_(values, backgrounds, layout, context) {
     wbsMeetingMarkerDates_(meeting, context.dateRange).forEach(function (date) {
       const dateIndex = wbsDateIndex_(context.dateRange, date);
       if (dateIndex >= 0) {
-        wbsAppendCellText_(values, sheetRow, layout.ganttStartCol + dateIndex, '▼');
+        const col = layout.ganttStartCol + dateIndex;
+        wbsAppendCellText_(values, sheetRow, col, '▼');
+        wbsAppendCellText_(notes, sheetRow, col, wbsMeetingMarkerNote_(meeting, date));
       }
     });
     if (!schedule && note) {
@@ -630,9 +634,14 @@ function writeWbsSheet_(model) {
   sheet.clear();
   sheet.setConditionalFormatRules([]);
   sheet.getRange(1, 1, sheet.getMaxRows(), sheet.getMaxColumns()).clearDataValidations();
+  sheet.getRange(1, 1, sheet.getMaxRows(), sheet.getMaxColumns()).clearNote();
   applyWbsPreValueFormats_(sheet, model, rowCount);
   sheet.getRange(1, 1, rowCount, colCount).setValues(model.values);
   sheet.getRange(1, 1, rowCount, colCount).setBackgrounds(model.backgrounds);
+  if (model.dateColumns.length) {
+    sheet.getRange(model.layout.meetingBodyStartRow, model.layout.ganttStartCol, model.layout.meetingBodyRows, model.dateColumns.length)
+      .setNotes(wbsSubMatrix_(model.notes, model.layout.meetingBodyStartRow, model.layout.ganttStartCol, model.layout.meetingBodyRows, model.dateColumns.length));
+  }
   applyWbsTemplateFormats_(sheet, model, rowCount, colCount);
 
   const normalBlocks = wbsRowBlocks_(model.normalRows || []);
@@ -1066,6 +1075,27 @@ function wbsAppendCellText_(values, row, col, text) {
   }
   const current = wbsClean_(values[row - 1][col - 1]);
   values[row - 1][col - 1] = current ? current + ' / ' + value : value;
+}
+
+function wbsMeetingMarkerNote_(meeting, dateText) {
+  const name = wbsClean_(wbsGet_(meeting, 'Name', 'name')) || '会議体';
+  const schedule = wbsClean_(wbsGet_(meeting, 'Schedule', 'schedule'));
+  const note = wbsClean_(wbsGet_(meeting, 'Note', 'note'));
+  return [
+    '会議体: ' + name,
+    '日付: ' + dateText.replace(/-/g, '/'),
+    schedule ? '開催ルール: ' + schedule : '',
+    note ? '備考: ' + note : ''
+  ].filter(Boolean).join('\n');
+}
+
+function wbsSubMatrix_(matrix, startRow, startCol, rowCount, colCount) {
+  const result = [];
+  for (let row = 0; row < rowCount; row += 1) {
+    const source = matrix[startRow + row - 1] || [];
+    result.push(source.slice(startCol - 1, startCol - 1 + colCount));
+  }
+  return result;
 }
 
 function wbsMilestonePlacements_(milestones, dateRange, laneCount) {

@@ -113,6 +113,8 @@ test('template places milestones and dated meetings on gantt rows', () => {
   assert.equal(model.values[model.layout.milestoneBodyStartRow + 1][model.layout.ganttStartCol + adjacentMilestoneDateIndex - 1], '▼');
   assert.equal(model.values[model.layout.meetingBodyStartRow - 1][2], '定例会 毎週月曜日');
   assert.equal(model.values[model.layout.meetingBodyStartRow - 1][model.layout.ganttStartCol + meetingDateIndex - 1], '▼');
+  assert.match(model.notes[model.layout.meetingBodyStartRow - 1][model.layout.ganttStartCol + meetingDateIndex - 1], /会議体: 定例会/);
+  assert.match(model.notes[model.layout.meetingBodyStartRow - 1][model.layout.ganttStartCol + meetingDateIndex - 1], /開催ルール: 毎週月曜日/);
 });
 
 test('recurring meeting rules expand biweekly and monthly occurrences', () => {
@@ -158,6 +160,8 @@ test('recurring meeting rules expand biweekly and monthly occurrences', () => {
   assert.equal(cell(model.layout.meetingBodyStartRow, '2026-07-17'), '▼');
   assert.equal(cell(model.layout.meetingBodyStartRow + 1, '2026-07-14'), '▼');
   assert.equal(cell(model.layout.meetingBodyStartRow + 1, '2026-08-11'), '▼');
+  const monthlyIndex = model.dateColumns.findIndex(date => date.date === '2026-08-11');
+  assert.match(model.notes[model.layout.meetingBodyStartRow][model.layout.ganttStartCol + monthlyIndex - 1], /会議体: 月次会/);
 });
 
 test('deriveActuals uses first activity and last done snapshot only for current 100%', () => {

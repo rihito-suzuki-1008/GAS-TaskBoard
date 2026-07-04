@@ -1711,6 +1711,10 @@
       z-index: 2;
     }
 
+    .gantt-timeline-row:hover {
+      z-index: 20;
+    }
+
     .gantt-timeline-marker {
       position: absolute;
       top: 5px;
@@ -1728,8 +1732,12 @@
       font-size: var(--text-xs);
       line-height: 24px;
       white-space: nowrap;
-      overflow: hidden;
+      overflow: visible;
       z-index: 4;
+    }
+
+    .gantt-timeline-marker:hover {
+      z-index: 21;
     }
 
     .gantt-timeline-marker.milestone {
@@ -1762,6 +1770,33 @@
       min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    .marker-tooltip {
+      position: absolute;
+      left: 12px;
+      top: calc(100% + 6px);
+      transform: translateX(-50%) translateY(-2px);
+      width: max-content;
+      max-width: 240px;
+      pointer-events: none;
+      opacity: 0;
+      border: 1px solid var(--color-border-strong);
+      border-radius: var(--radius-md);
+      background: var(--color-surface);
+      color: var(--color-text-primary);
+      box-shadow: var(--shadow-md);
+      padding: var(--space-2) var(--space-3);
+      line-height: 1.45;
+      white-space: pre-line;
+      z-index: 12;
+      transition: opacity var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+    }
+
+    .gantt-timeline-marker:hover .marker-tooltip,
+    .gantt-timeline-marker:focus-within .marker-tooltip {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
     }
 
     .gantt-row.empty-lane {

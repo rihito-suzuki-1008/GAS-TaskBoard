@@ -609,10 +609,12 @@
       const day = dateToDay(marker.date);
       const left = Number.isFinite(marker.left) ? marker.left : (day - scale.startDay + 0.5) * scale.dayWidth;
       if (!Number.isFinite(day) || left < -120 || left > scale.width + 120) return '';
+      const tooltip = marker.tooltip || `${marker.label} ${marker.date}`;
       return `
-        <span class="gantt-timeline-marker ${h(marker.kind)} ${marker.compact ? 'compact' : ''}" style="left:${left}px" title="${h(marker.label)} ${h(marker.date)}">
+        <span class="gantt-timeline-marker ${h(marker.kind)} ${marker.compact ? 'compact' : ''}" style="left:${left}px" title="${h(tooltip)}">
           <span class="marker-pin">▼</span>
           ${marker.compact ? '' : `<span class="marker-label">${h(marker.label)}</span>`}
+          <span class="marker-tooltip">${h(tooltip)}</span>
         </span>
       `;
     }
