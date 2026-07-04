@@ -18,6 +18,15 @@
       ];
     }
 
+    function meetingScheduleOptions(selected) {
+      const presets = ['毎日', '毎週月曜日', '毎週火曜日', '毎週水曜日', '毎週木曜日', '毎週金曜日', '毎週土曜日', '毎週日曜日'];
+      const options = [{ value: '', label: '指定なし' }].concat(presets.map(value => ({ value, label: value })));
+      if (selected && !options.some(option => option.value === selected)) {
+        options.push({ value: selected, label: selected });
+      }
+      return options;
+    }
+
     function progressOptions() {
       return [0, 15, 30, 45, 60, 75, 90, 100].map(value => ({
         value: String(value),

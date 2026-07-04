@@ -176,7 +176,7 @@ function buildWbsModel_(rows, options) {
   const visibleRows = filterWbsTree_(derivedState);
   const maxDepth = Math.max(3, visibleRows.reduce(function (max, row) { return Math.max(max, row.depth); }, 0));
   const layout = buildWbsLayout_(maxDepth, meetings.length, visibleRows.length);
-  const dateRange = buildWbsDateRange_(visibleRows, derivedState.derived, options);
+  const dateRange = buildWbsDateRange_(visibleRows, derivedState.derived, options, milestones, meetings);
   layout.totalCols = layout.ganttStartCol + dateRange.dateColumns.length - 1;
   const actuals = deriveActuals_(logs, {
     progressByNodeId: derivedState.progressByNodeId
@@ -264,7 +264,7 @@ function buildWbsLayout_(maxDepth, meetingCount, taskCount) {
   const headerRow2 = 5;
   const milestoneStartRow = 6;
   const milestoneBodyStartRow = 7;
-  const milestoneBodyRows = 3;
+  const milestoneBodyRows = 4;
   const milestoneEndRow = milestoneBodyStartRow + milestoneBodyRows - 1;
   const meetingStartRow = milestoneEndRow + 1;
   const meetingBodyStartRow = meetingStartRow + 1;
@@ -313,13 +313,24 @@ function buildWbsLayout_(maxDepth, meetingCount, taskCount) {
   };
 }
 
-function buildWbsDateRange_(visibleRows, derived, options) {
+function buildWbsDateRange_(visibleRows, derived, options, milestones, meetings) {
   const days = [];
   visibleRows.forEach(function (row) {
     const plan = wbsPlanForNode_(row.node, derived[wbsNodeId_(row.node)]);
     if (wbsIsValidDate_(plan.startDate) && wbsIsValidDate_(plan.endDate)) {
       days.push(wbsDateToDay_(plan.startDate), wbsDateToDay_(plan.endDate));
     }
+  });
+  (milestones || []).forEach(function (milestone) {
+    const date = wbsClean_(wbsGet_(milestone, 'Date', 'date'));
+    if (wbsIsValidDate_(date)) {
+      days.push(wbsDateToDay_(date));
+    }
+  });
+  (meetings || []).forEach(function (meeting) {
+    wbsExplicitMeetingMarkerDates_(meeting).forEach(function (date) {
+      days.push(wbsDateToDay_(date));
+    });
   });
   let startDay;
   let endDay;
@@ -403,14 +414,12 @@ function fillWbsStaticSections_(values, backgrounds, layout, context) {
   values[layout.milestoneStartRow - 1][1] = 'マイルストーン';
   wbsSetRowBackground_(backgrounds, layout.milestoneStartRow, 1, layout.totalCols, WBS_COLORS.section);
   wbsSetBackgrounds_(backgrounds, layout.milestoneBodyStartRow, 1, layout.milestoneBodyRows, layout.leftEndCol, WBS_COLORS.paleYellow);
-  context.milestones.forEach(function (milestone) {
-    const name = wbsClean_(wbsGet_(milestone, 'Name', 'name'));
-    const date = wbsClean_(wbsGet_(milestone, 'Date', 'date'));
-    const dateIndex = wbsDateIndex_(context.dateRange, date);
+  wbsMilestonePlacements_(context.milestones, context.dateRange, layout.milestoneBodyRows - 1).forEach(function (placement) {
+    const dateIndex = wbsDateIndex_(context.dateRange, placement.date);
     if (dateIndex >= 0) {
       const col = layout.ganttStartCol + dateIndex;
-      wbsAppendCellText_(values, layout.milestoneBodyStartRow, col, name);
-      wbsAppendCellText_(values, layout.milestoneBodyStartRow + 1, col, '▼');
+      wbsAppendCellText_(values, layout.milestoneBodyStartRow + placement.lane, col, placement.name);
+      wbsAppendCellText_(values, layout.milestoneBodyStartRow + placement.lane + 1, col, '▼');
     }
   });
 
@@ -423,7 +432,7 @@ function fillWbsStaticSections_(values, backgrounds, layout, context) {
     const schedule = wbsClean_(wbsGet_(meeting, 'Schedule', 'schedule'));
     const note = wbsClean_(wbsGet_(meeting, 'Note', 'note'));
     values[sheetRow - 1][2] = [name, schedule].filter(Boolean).join(' ');
-    wbsMeetingMarkerDates_(meeting).forEach(function (date) {
+    wbsMeetingMarkerDates_(meeting, context.dateRange).forEach(function (date) {
       const dateIndex = wbsDateIndex_(context.dateRange, date);
       if (dateIndex >= 0) {
         wbsAppendCellText_(values, sheetRow, layout.ganttStartCol + dateIndex, '▼');
@@ -950,7 +959,77 @@ function wbsAppendCellText_(values, row, col, text) {
   values[row - 1][col - 1] = current ? current + ' / ' + value : value;
 }
 
-function wbsMeetingMarkerDates_(meeting) {
+function wbsMilestonePlacements_(milestones, dateRange, laneCount) {
+  const lanes = [];
+  const safeLaneCount = Math.max(1, Number(laneCount) || 1);
+  return (milestones || [])
+    .map(function (milestone, index) {
+      const date = wbsClean_(wbsGet_(milestone, 'Date', 'date'));
+      return {
+        name: wbsClean_(wbsGet_(milestone, 'Name', 'name')),
+        date: date,
+        day: wbsDateToDay_(date),
+        index: index
+      };
+    })
+    .filter(function (marker) {
+      return Number.isFinite(marker.day) && wbsDateIndex_(dateRange, marker.date) >= 0;
+    })
+    .sort(function (a, b) {
+      return a.day - b.day || a.index - b.index;
+    })
+    .map(function (marker) {
+      let laneIndex = lanes.findIndex(function (lastDay) {
+        return lastDay === undefined || marker.day - lastDay >= 2;
+      });
+      if (laneIndex < 0 && lanes.length < safeLaneCount) {
+        laneIndex = lanes.length;
+      }
+      if (laneIndex < 0) {
+        laneIndex = lanes.reduce(function (best, lastDay, index) {
+          return lastDay < lanes[best] ? index : best;
+        }, 0);
+      }
+      lanes[laneIndex] = marker.day;
+      return {
+        name: marker.name,
+        date: marker.date,
+        lane: laneIndex
+      };
+    });
+}
+
+function wbsMeetingMarkerDates_(meeting, dateRange) {
+  const result = [];
+  const seen = {};
+  function addDate(dateText) {
+    if (wbsIsValidDate_(dateText) && !seen[dateText]) {
+      seen[dateText] = true;
+      result.push(dateText);
+    }
+  }
+
+  wbsExplicitMeetingMarkerDates_(meeting).forEach(addDate);
+  if (dateRange && Number.isFinite(dateRange.startDay) && Number.isFinite(dateRange.endDay)) {
+    if (wbsMeetingIsDaily_(meeting)) {
+      for (let day = dateRange.startDay; day <= dateRange.endDay; day += 1) {
+        addDate(wbsDayToDate_(day));
+      }
+    } else {
+      const weekday = wbsMeetingRecurrenceWeekday_(meeting);
+      if (weekday !== null) {
+        for (let day = dateRange.startDay; day <= dateRange.endDay; day += 1) {
+          if (wbsWeekdayOfDay_(day) === weekday) {
+            addDate(wbsDayToDate_(day));
+          }
+        }
+      }
+    }
+  }
+  return result.sort();
+}
+
+function wbsExplicitMeetingMarkerDates_(meeting) {
   const text = [
     wbsGet_(meeting, 'Name', 'name'),
     wbsGet_(meeting, 'Schedule', 'schedule'),
@@ -966,6 +1045,47 @@ function wbsMeetingMarkerDates_(meeting) {
     }
   });
   return result;
+}
+
+function wbsMeetingIsDaily_(meeting) {
+  const text = wbsClean_(wbsGet_(meeting, 'Schedule', 'schedule')).toLowerCase();
+  return text.indexOf('毎日') !== -1 || text.indexOf('daily') !== -1 || text.indexOf('every day') !== -1;
+}
+
+function wbsMeetingRecurrenceWeekday_(meeting) {
+  const text = wbsClean_(wbsGet_(meeting, 'Schedule', 'schedule')).toLowerCase();
+  const japanese = [
+    { words: ['日曜日', '日曜'], value: 0 },
+    { words: ['月曜日', '月曜'], value: 1 },
+    { words: ['火曜日', '火曜'], value: 2 },
+    { words: ['水曜日', '水曜'], value: 3 },
+    { words: ['木曜日', '木曜'], value: 4 },
+    { words: ['金曜日', '金曜'], value: 5 },
+    { words: ['土曜日', '土曜'], value: 6 }
+  ];
+  const english = [
+    { pattern: /\b(sunday|sun)\b/, value: 0 },
+    { pattern: /\b(monday|mon)\b/, value: 1 },
+    { pattern: /\b(tuesday|tue)\b/, value: 2 },
+    { pattern: /\b(wednesday|wed)\b/, value: 3 },
+    { pattern: /\b(thursday|thu)\b/, value: 4 },
+    { pattern: /\b(friday|fri)\b/, value: 5 },
+    { pattern: /\b(saturday|sat)\b/, value: 6 }
+  ];
+  const japaneseMatch = japanese.find(function (item) {
+    return item.words.some(function (word) { return text.indexOf(word) !== -1; });
+  });
+  if (japaneseMatch) {
+    return japaneseMatch.value;
+  }
+  const englishMatch = english.find(function (item) {
+    return item.pattern.test(text);
+  });
+  return englishMatch ? englishMatch.value : null;
+}
+
+function wbsWeekdayOfDay_(day) {
+  return new Date(day * 86400000).getUTCDay();
 }
 
 function wbsA1_(row, col) {

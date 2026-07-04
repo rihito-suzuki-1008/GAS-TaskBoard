@@ -427,12 +427,6 @@
       }
       return `
         <section class="view">
-          <div class="view-toolbar">
-            <button class="button secondary compact" data-sort-field="name">名称</button>
-            <button class="button secondary compact" data-sort-field="status">ステータス</button>
-            <button class="button secondary compact" data-sort-field="priority">優先度</button>
-            <button class="button secondary compact" data-sort-field="progress">進捗</button>
-          </div>
           <div class="table-wrap">
             <table>
               <thead>
@@ -535,7 +529,7 @@
     function renderGantt() {
       const displayRows = visibleTreeNodes();
       const scale = ganttScale(displayRows);
-      const timelineRows = ganttTimelineRows();
+      const timelineRows = ganttTimelineRows(scale);
       const timelineHeight = timelineRows.length * GANTT_ROW_HEIGHT;
       const emptyLaneCount = Math.max(10, Math.ceil((18 - displayRows.length) / 1));
       const taskHeight = Math.max((displayRows.length + emptyLaneCount) * GANTT_ROW_HEIGHT, 480);
@@ -561,8 +555,8 @@
               </div>
             </div>
             <button class="button primary compact" type="button" data-action="create-child-shell" data-parent-id="${h(state.rootId)}">${icon('plus')}タスクを追加</button>
-            <button class="button secondary compact" type="button" data-action="project-settings" data-tab="milestones">マイルストーン</button>
-            <button class="button secondary compact" type="button" data-action="project-settings" data-tab="meetings">会議体</button>
+            <button class="button secondary compact" type="button" data-action="project-settings" data-tab="${h(state.projectSettingsTab || 'milestones')}">${icon('settings')}予定設定</button>
+            <button class="button secondary compact" type="button" data-action="toggle-gantt-timeline">${state.ganttTimelineCollapsed ? icon('chevron-down') + '予定を表示' : icon('chevron-right') + '予定を畳む'}</button>
             <button class="button secondary compact" type="button" data-action="gantt-jump-today">今日へ</button>
           </div>
           <div class="gantt-frame" style="--gantt-tree-width:${treeWidth}px">
@@ -613,12 +607,12 @@
 
     function renderGanttTimelineMarker(marker, scale) {
       const day = dateToDay(marker.date);
-      const left = (day - scale.startDay) * scale.dayWidth;
+      const left = Number.isFinite(marker.left) ? marker.left : (day - scale.startDay + 0.5) * scale.dayWidth;
       if (!Number.isFinite(day) || left < -120 || left > scale.width + 120) return '';
       return `
-        <span class="gantt-timeline-marker ${h(marker.kind)}" style="left:${left}px" title="${h(marker.label)} ${h(marker.date)}">
+        <span class="gantt-timeline-marker ${h(marker.kind)} ${marker.compact ? 'compact' : ''}" style="left:${left}px" title="${h(marker.label)} ${h(marker.date)}">
           <span class="marker-pin">▼</span>
-          <span class="marker-label">${h(marker.label)}</span>
+          ${marker.compact ? '' : `<span class="marker-label">${h(marker.label)}</span>`}
         </span>
       `;
     }

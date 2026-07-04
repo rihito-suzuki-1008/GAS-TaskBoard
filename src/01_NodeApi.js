@@ -55,8 +55,14 @@ function addNode(payload) {
     };
 
     appendObject_(SHEET.NODES, node);
-    const freshRows = readAll_();
-    const affectedIds = unique_([nodeId].concat(ancestorIds_(nodeId, activeNodes_(freshRows.nodes))));
+    let freshRows = readAll_();
+    const rollupWriteMap = {};
+    const rollupIds = rollupParentStatuses_(freshRows, [parentId], actor.MemberId, rollupWriteMap);
+    if (rollupIds.length) {
+      writeObjects_(SHEET.NODES, Object.keys(rollupWriteMap).map(function (id) { return rollupWriteMap[id]; }));
+      freshRows = readAll_();
+    }
+    const affectedIds = unique_([nodeId, parentId].concat(rollupIds).concat(ancestorIdsForMany_([nodeId, parentId].concat(rollupIds), activeNodes_(freshRows.nodes))));
     return makeMutationPayload_(freshRows, affectedIds, payload.requestId, { createdNodeId: nodeId });
   });
 }
@@ -107,6 +113,7 @@ function saveNode(payload) {
     if (scheduleChanged) {
       rescheduleResult = rescheduleFromSeeds_([node.NodeId], activeNodes_(rows.nodes), visibleDependencies_(rows.dependencies, nodesById), actor.MemberId, writeMap);
     }
+    rollupParentStatuses_(rows, [node.NodeId], actor.MemberId, writeMap);
 
     writeObjects_(SHEET.NODES, Object.keys(writeMap).map(function (id) { return writeMap[id]; }));
     appendNodeActivityLogs_(node.NodeId, {
@@ -192,10 +199,14 @@ function moveNode(payload) {
       : nextSortOrder_(active.filter(function (n) { return n.ParentId === newParentId; }));
     node.UpdatedAt = nowIso_();
     node.UpdatedBy = actor.MemberId;
-    writeObject_(SHEET.NODES, node);
+    const writeMap = {};
+    writeMap[node.NodeId] = node;
+    const rollupIds = rollupParentStatuses_(rows, [nodeId, oldParentId, newParentId], actor.MemberId, writeMap);
+    writeObjects_(SHEET.NODES, Object.keys(writeMap).map(function (id) { return writeMap[id]; }));
 
     rows = readAll_();
     const affectedIds = unique_([nodeId, oldParentId, newParentId]
+      .concat(rollupIds)
       .concat(ancestorIds_(oldParentId, activeNodes_(rows.nodes)))
       .concat(ancestorIds_(newParentId, activeNodes_(rows.nodes))));
     return makeMutationPayload_(rows, affectedIds, requestId, {});
@@ -230,8 +241,14 @@ function deleteNode(payload) {
     });
     writeObjects_(SHEET.NODES, targets);
 
-    const freshRows = readAll_();
-    const affectedIds = ancestorIds_(node.ParentId, activeNodes_(freshRows.nodes)).concat([node.ParentId]);
+    let freshRows = readAll_();
+    const rollupWriteMap = {};
+    const rollupIds = rollupParentStatuses_(freshRows, [node.ParentId], actor.MemberId, rollupWriteMap);
+    if (rollupIds.length) {
+      writeObjects_(SHEET.NODES, Object.keys(rollupWriteMap).map(function (id) { return rollupWriteMap[id]; }));
+      freshRows = readAll_();
+    }
+    const affectedIds = unique_(ancestorIds_(node.ParentId, activeNodes_(freshRows.nodes)).concat([node.ParentId]).concat(rollupIds));
     return makeMutationPayload_(freshRows, affectedIds, cleanString_(payload.requestId), {
       deletedNodeIds: targetIds
     });
@@ -345,6 +362,65 @@ function applyNodePatch_(node, patch, rows) {
     node.StartDate = schedule.startDate;
     node.EndDate = schedule.endDate;
   }
+}
+
+function rollupParentStatuses_(rows, seedIds, actorId, writeMap) {
+  writeMap = writeMap || {};
+  const active = activeNodes_(rows.nodes);
+  const nodesById = byId_(active, 'NodeId');
+  const children = childrenMap_(active);
+  const doneColumnId = doneStatusColumnId_(rows.statusColumns);
+  const inProgressColumnId = inProgressStatusColumnId_(rows.statusColumns);
+  const candidates = unique_((seedIds || []).reduce(function (all, id) {
+    const cleanId = cleanString_(id);
+    if (!cleanId) {
+      return all;
+    }
+    return all.concat([cleanId]).concat(ancestorIds_(cleanId, active));
+  }, []));
+  const changedIds = [];
+
+  candidates.forEach(function (nodeId) {
+    const node = nodesById[nodeId];
+    const childIds = children[nodeId] || [];
+    if (!node || !childIds.length) {
+      return;
+    }
+    const childStatuses = childIds
+      .map(function (childId) { return nodesById[childId]; })
+      .filter(Boolean)
+      .map(function (child) { return cleanString_(child.StatusColumnId); });
+    if (!childStatuses.length) {
+      return;
+    }
+    let nextStatus = '';
+    if (childStatuses.every(function (statusId) { return statusId === doneColumnId; })) {
+      nextStatus = doneColumnId;
+    } else if (inProgressColumnId && (
+      childStatuses.some(function (statusId) { return statusId === inProgressColumnId; }) ||
+      cleanString_(node.StatusColumnId) === doneColumnId
+    )) {
+      nextStatus = inProgressColumnId;
+    }
+    if (!nextStatus || cleanString_(node.StatusColumnId) === nextStatus) {
+      return;
+    }
+    node.StatusColumnId = nextStatus;
+    node.UpdatedAt = nowIso_();
+    node.UpdatedBy = actorId;
+    writeMap[node.NodeId] = node;
+    changedIds.push(node.NodeId);
+  });
+
+  return changedIds;
+}
+
+function inProgressStatusColumnId_(statusColumns) {
+  const column = (statusColumns || []).find(function (statusColumn) {
+    const name = cleanString_(statusColumn.Name).toLowerCase();
+    return name === '進行中' || name.indexOf('進行中') !== -1 || name === 'doing' || name === 'in progress';
+  });
+  return column ? cleanString_(column.ColumnId) : '';
 }
 
 function appendNodeActivityLogs_(nodeId, change) {

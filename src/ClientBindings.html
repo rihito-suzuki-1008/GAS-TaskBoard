@@ -496,6 +496,11 @@
       if (action === 'calendar-today') return selectCalendarToday(event.currentTarget);
       if (action === 'calendar-clear') return clearCalendarSelection(event.currentTarget);
       if (action === 'gantt-jump-today') return jumpGanttToToday();
+      if (action === 'toggle-gantt-timeline') {
+        state.ganttTimelineCollapsed = !state.ganttTimelineCollapsed;
+        render();
+        return;
+      }
       if (action === 'filter-member') {
         state.filters.assigneeId = event.currentTarget.dataset.memberId || '';
         render();

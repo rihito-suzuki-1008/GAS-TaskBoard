@@ -125,7 +125,7 @@
       const today = localTodayDay();
       const scaleDays = scheduled
         .flatMap(node => [dateToDay(node.displayStartDate), dateToDay(node.displayEndDate)])
-        .concat(ganttTimelineMarkerDates())
+        .concat(ganttTimelineAnchorDates())
         .concat(today);
       const filterRange = dateFilterRange();
       if (filterRange) scaleDays.push(filterRange.start, filterRange.end);
@@ -144,30 +144,92 @@
       return { startDay, endDay, dayWidth, width: Math.max(900, (endDay - startDay + 1) * dayWidth) };
     }
 
-    function ganttTimelineRows() {
+    function ganttTimelineRows(scale) {
+      if (state.ganttTimelineCollapsed || !scale) return [];
       const milestoneMarkers = state.milestones
         .filter(item => isDateText(item.date))
         .map(item => ({ kind: 'milestone', date: item.date, label: item.name || 'マイルストーン' }));
       const meetingMarkers = state.meetings.flatMap(item => (
-        meetingMarkerDates(item).map(date => ({ kind: 'meeting', date, label: item.name || '会議体' }))
+        meetingMarkerDates(item, scale.startDay, scale.endDay).map(date => ({ kind: 'meeting', date, label: item.name || '会議体', compact: true }))
       ));
-      const rows = [];
-      if (milestoneMarkers.length) {
-        rows.push({ label: 'マイルストーン', countLabel: `${milestoneMarkers.length}件`, markers: milestoneMarkers });
-      }
-      if (meetingMarkers.length) {
-        rows.push({ label: '会議体', countLabel: `${meetingMarkers.length}件`, markers: meetingMarkers });
-      }
-      return rows;
+      return timelineLaneRows('マイルストーン', milestoneMarkers, scale)
+        .concat(timelineLaneRows('会議体', meetingMarkers, scale));
     }
 
-    function ganttTimelineMarkerDates() {
-      return ganttTimelineRows()
-        .flatMap(row => row.markers.map(marker => dateToDay(marker.date)))
+    function ganttTimelineAnchorDates() {
+      return state.milestones
+        .filter(item => isDateText(item.date))
+        .map(item => dateToDay(item.date))
+        .concat(state.meetings.flatMap(meetingExplicitMarkerDates).map(dateToDay))
         .filter(day => Number.isFinite(day));
     }
 
-    function meetingMarkerDates(meeting) {
+    function timelineLaneRows(label, markers, scale) {
+      const sorted = markers
+        .map(marker => Object.assign({}, marker, { day: dateToDay(marker.date), width: timelineMarkerWidth(marker) }))
+        .filter(marker => Number.isFinite(marker.day) && marker.day >= scale.startDay && marker.day <= scale.endDay)
+        .sort((a, b) => a.day - b.day || String(a.label || '').localeCompare(String(b.label || ''), 'ja'));
+      if (!sorted.length) return [];
+      const lanes = [];
+      sorted.forEach(marker => {
+        const left = (marker.day - scale.startDay + 0.5) * scale.dayWidth;
+        const start = left - marker.width / 2;
+        const end = left + marker.width / 2;
+        const lane = lanes.find(item => start > item.lastEnd + 8);
+        const target = lane || { markers: [], lastEnd: -Infinity };
+        target.markers.push(Object.assign({}, marker, { left }));
+        target.lastEnd = end;
+        if (!lane) lanes.push(target);
+      });
+      return lanes.map((lane, index) => ({
+        label: index === 0 ? label : '',
+        countLabel: index === 0 ? `${sorted.length}件` : '',
+        markers: lane.markers
+      }));
+    }
+
+    function timelineMarkerWidth(marker) {
+      if (marker && marker.compact) return 24;
+      const label = String(marker && marker.label || '');
+      return Math.min(180, Math.max(56, 28 + label.length * 12));
+    }
+
+    function meetingMarkerDates(meeting, startDay, endDay) {
+      const seen = new Set();
+      const result = [];
+      meetingExplicitMarkerDates(meeting).forEach(date => {
+        if (!seen.has(date)) {
+          seen.add(date);
+          result.push(date);
+        }
+      });
+      if (Number.isFinite(startDay) && Number.isFinite(endDay)) {
+        if (meetingIsDaily(meeting)) {
+          for (let day = startDay; day <= endDay; day += 1) {
+            const date = dayToDate(day);
+            if (!seen.has(date)) {
+              seen.add(date);
+              result.push(date);
+            }
+          }
+        } else {
+          const weekday = meetingRecurrenceWeekday(meeting);
+          if (weekday !== null) {
+            for (let day = startDay; day <= endDay; day += 1) {
+              if (weekdayOfDay(day) !== weekday) continue;
+              const date = dayToDate(day);
+              if (!seen.has(date)) {
+                seen.add(date);
+                result.push(date);
+              }
+            }
+          }
+        }
+      }
+      return result.sort();
+    }
+
+    function meetingExplicitMarkerDates(meeting) {
       const text = [meeting.name, meeting.schedule, meeting.note].map(value => value || '').join(' ');
       const seen = new Set();
       return (text.match(/\d{4}-\d{2}-\d{2}/g) || []).filter(date => {
@@ -175,6 +237,41 @@
         seen.add(date);
         return true;
       });
+    }
+
+    function meetingIsDaily(meeting) {
+      const text = String(meeting && meeting.schedule || '').toLowerCase();
+      return text.indexOf('毎日') !== -1 || text.indexOf('daily') !== -1 || text.indexOf('every day') !== -1;
+    }
+
+    function meetingRecurrenceWeekday(meeting) {
+      const text = String(meeting && meeting.schedule || '').toLowerCase();
+      const japanese = [
+        { patterns: ['日曜日', '日曜'], value: 0 },
+        { patterns: ['月曜日', '月曜'], value: 1 },
+        { patterns: ['火曜日', '火曜'], value: 2 },
+        { patterns: ['水曜日', '水曜'], value: 3 },
+        { patterns: ['木曜日', '木曜'], value: 4 },
+        { patterns: ['金曜日', '金曜'], value: 5 },
+        { patterns: ['土曜日', '土曜'], value: 6 }
+      ];
+      const english = [
+        { pattern: /\b(sunday|sun)\b/, value: 0 },
+        { pattern: /\b(monday|mon)\b/, value: 1 },
+        { pattern: /\b(tuesday|tue)\b/, value: 2 },
+        { pattern: /\b(wednesday|wed)\b/, value: 3 },
+        { pattern: /\b(thursday|thu)\b/, value: 4 },
+        { pattern: /\b(friday|fri)\b/, value: 5 },
+        { pattern: /\b(saturday|sat)\b/, value: 6 }
+      ];
+      const japaneseMatch = japanese.find(item => item.patterns.some(pattern => text.indexOf(pattern) !== -1));
+      if (japaneseMatch) return japaneseMatch.value;
+      const englishMatch = english.find(item => item.pattern.test(text));
+      return englishMatch ? englishMatch.value : null;
+    }
+
+    function weekdayOfDay(day) {
+      return new Date(day * 86400000).getUTCDay();
     }
 
     function isDateText(value) {
