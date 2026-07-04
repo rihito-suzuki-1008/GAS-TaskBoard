@@ -229,6 +229,14 @@
       return done.id || '';
     }
 
+    function inProgressStatusColumnId() {
+      const column = state.statusColumns.find(item => {
+        const name = String(item.name || '').trim().toLowerCase();
+        return name === '進行中' || name.includes('進行中') || name === 'doing' || name === 'in progress';
+      });
+      return column ? column.id : '';
+    }
+
     function applyLocalNodePatch(node, patch) {
       if (!node || !patch) return;
       const previousStatus = node.statusColumnId;
@@ -255,6 +263,58 @@
       } else if (isLeaf && patch.statusColumnId !== undefined && previousStatus === doneId && node.manualProgress === 100) {
         node.manualProgress = 90;
       }
+      rollupLocalParentStatuses([node.id]);
+    }
+
+    function rollupLocalParentStatuses(seedIds) {
+      const doneId = doneStatusColumnId();
+      const inProgressId = inProgressStatusColumnId();
+      if (!doneId) return;
+      const nodesById = new Map(state.nodes.map(item => [item.id, item]));
+      const children = new Map();
+      state.nodes.forEach(item => {
+        const parentId = item.parentId || '';
+        if (!children.has(parentId)) children.set(parentId, []);
+        children.get(parentId).push(item.id);
+      });
+      const candidates = [];
+      const seen = new Set();
+      const addCandidate = id => {
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        candidates.push(id);
+      };
+      (Array.isArray(seedIds) ? seedIds : [seedIds]).forEach(seedId => {
+        let currentId = seedId;
+        while (currentId) {
+          addCandidate(currentId);
+          const node = nodesById.get(currentId);
+          currentId = node ? node.parentId : '';
+        }
+      });
+      candidates.forEach(nodeId => {
+        const node = nodesById.get(nodeId);
+        const childIds = children.get(nodeId) || [];
+        if (!node || !childIds.length) return;
+        const childStatuses = childIds
+          .map(childId => nodesById.get(childId))
+          .filter(Boolean)
+          .map(child => child.statusColumnId || '');
+        if (!childStatuses.length) return;
+        let nextStatus = '';
+        if (childStatuses.every(statusId => statusId === doneId)) {
+          nextStatus = doneId;
+        } else if (inProgressId && (
+          childStatuses.some(statusId => statusId === inProgressId) ||
+          childStatuses.some(statusId => statusId === doneId) ||
+          node.statusColumnId === doneId
+        )) {
+          nextStatus = inProgressId;
+        }
+        if (nextStatus && node.statusColumnId !== nextStatus) {
+          node.statusColumnId = nextStatus;
+        }
+      });
     }
 
     function priorityLabel(priority) {
@@ -374,6 +434,19 @@
 
     function cloneNode(node) {
       return node ? JSON.parse(JSON.stringify(node)) : null;
+    }
+
+    function rollbackSnapshotForSeeds(seedIds) {
+      const ids = new Set();
+      (Array.isArray(seedIds) ? seedIds : [seedIds]).forEach(seedId => {
+        if (!seedId) return;
+        ids.add(seedId);
+        ancestorChain(seedId).forEach(ancestorId => ids.add(ancestorId));
+      });
+      return Array.from(ids)
+        .map(id => state.nodesById.get(id))
+        .filter(Boolean)
+        .map(cloneNode);
     }
 
     function cloneValue(value) {

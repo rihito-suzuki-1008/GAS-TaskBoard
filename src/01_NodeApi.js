@@ -398,6 +398,7 @@ function rollupParentStatuses_(rows, seedIds, actorId, writeMap) {
       nextStatus = doneColumnId;
     } else if (inProgressColumnId && (
       childStatuses.some(function (statusId) { return statusId === inProgressColumnId; }) ||
+      childStatuses.some(function (statusId) { return statusId === doneColumnId; }) ||
       cleanString_(node.StatusColumnId) === doneColumnId
     )) {
       nextStatus = inProgressColumnId;
@@ -449,4 +450,11 @@ function appendNodeActivityLogs_(nodeId, change) {
       ChangedBy: change.actorId
     });
   }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    rollupParentStatuses_: rollupParentStatuses_,
+    inProgressStatusColumnId_: inProgressStatusColumnId_
+  };
 }
