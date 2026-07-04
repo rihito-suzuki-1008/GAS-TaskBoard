@@ -174,8 +174,8 @@
       const lanes = [];
       sorted.forEach(marker => {
         const left = (marker.day - scale.startDay + 0.5) * scale.dayWidth;
-        const start = left - marker.width / 2;
-        const end = left + marker.width / 2;
+        const start = left - timelineMarkerAnchorOffset();
+        const end = start + marker.width;
         const lane = lanes.find(item => start > item.lastEnd + 8);
         const target = lane || { markers: [], lastEnd: -Infinity };
         target.markers.push(Object.assign({}, marker, { left }));
@@ -193,6 +193,10 @@
       if (marker && marker.compact) return 24;
       const label = String(marker && marker.label || '');
       return Math.min(180, Math.max(56, 28 + label.length * 12));
+    }
+
+    function timelineMarkerAnchorOffset() {
+      return 12;
     }
 
     function meetingMarkerDates(meeting, startDay, endDay) {
