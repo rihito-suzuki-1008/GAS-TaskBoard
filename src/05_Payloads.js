@@ -142,9 +142,25 @@ function clientMeeting_(meeting) {
     id: cleanString_(meeting.MeetingId),
     name: cleanString_(meeting.Name),
     schedule: cleanString_(meeting.Schedule),
+    scheduleRule: clientMeetingScheduleRule_(meeting),
+    startDate: cleanString_(meeting.StartDate),
+    endDate: cleanString_(meeting.EndDate),
     note: cleanString_(meeting.Note),
     sortOrder: Number(meeting.SortOrder) || 0
   };
+}
+
+function clientMeetingScheduleRule_(meeting) {
+  const text = cleanString_(meeting.ScheduleRuleJson);
+  if (!text) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (error) {
+    return {};
+  }
 }
 
 function clientComment_(comment) {

@@ -46,7 +46,7 @@ HEADERS[SHEET.DEPENDENCIES] = ['DependencyId', 'PredecessorNodeId', 'SuccessorNo
 HEADERS[SHEET.COMMENTS] = ['CommentId', 'NodeId', 'AuthorId', 'AuthorName', 'Timestamp', 'Text', 'ParentCommentId', 'Mentions'];
 HEADERS[SHEET.ACTIVITY_LOG] = ['LogId', 'NodeId', 'Field', 'OldValue', 'NewValue', 'NewValueIsDone', 'ChangedAt', 'ChangedBy'];
 HEADERS[SHEET.MILESTONES] = ['MilestoneId', 'Name', 'Date', 'Note', 'SortOrder'];
-HEADERS[SHEET.MEETINGS] = ['MeetingId', 'Name', 'Schedule', 'Note', 'SortOrder'];
+HEADERS[SHEET.MEETINGS] = ['MeetingId', 'Name', 'Schedule', 'Note', 'SortOrder', 'ScheduleRuleJson', 'StartDate', 'EndDate'];
 
 var TEXT_COLUMNS = {};
 TEXT_COLUMNS[SHEET.NODES] = [
@@ -69,7 +69,7 @@ TEXT_COLUMNS[SHEET.DEPENDENCIES] = ['DependencyId', 'PredecessorNodeId', 'Succes
 TEXT_COLUMNS[SHEET.COMMENTS] = ['CommentId', 'NodeId', 'AuthorId', 'Timestamp', 'ParentCommentId', 'Mentions'];
 TEXT_COLUMNS[SHEET.ACTIVITY_LOG] = ['LogId', 'NodeId', 'Field', 'ChangedAt', 'ChangedBy'];
 TEXT_COLUMNS[SHEET.MILESTONES] = ['MilestoneId', 'Date'];
-TEXT_COLUMNS[SHEET.MEETINGS] = ['MeetingId'];
+TEXT_COLUMNS[SHEET.MEETINGS] = ['MeetingId', 'ScheduleRuleJson', 'StartDate', 'EndDate'];
 
 var PRIORITIES = ['High', 'Mid', 'Low'];
 var PROGRESS_VALUES = [0, 15, 30, 45, 60, 75, 90, 100];

@@ -701,7 +701,10 @@
         const target = draftForScope(button.dataset.calendarScope);
         if (target) {
           const field = button.dataset.calendarField;
-          if (field === 'startDate' || field === 'endDate') {
+          if (button.dataset.calendarScope === 'projectSettings' && state.projectSettingsTab === 'meetings') {
+            target[field] = '';
+            if (field === 'startDate') target.endDate = '';
+          } else if (field === 'startDate' || field === 'endDate') {
             target.startDate = '';
             target.endDate = '';
           } else {
@@ -721,6 +724,18 @@
       }
       const target = draftForScope(scope);
       if (!target) return;
+      if (scope === 'projectSettings' && state.projectSettingsTab === 'meetings') {
+        if (field === 'startDate') {
+          target.startDate = dateText;
+          if (target.endDate && target.endDate < dateText) target.endDate = '';
+          return;
+        }
+        if (field === 'endDate') {
+          if (target.startDate && dateText < target.startDate) return;
+          target.endDate = dateText;
+          return;
+        }
+      }
       if (field === 'startDate') {
         target.startDate = dateText;
         if (!target.endDate || target.endDate < dateText) target.endDate = dateText;

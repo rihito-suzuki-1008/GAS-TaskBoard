@@ -161,6 +161,7 @@
         .filter(item => isDateText(item.date))
         .map(item => dateToDay(item.date))
         .concat(state.meetings.flatMap(meetingExplicitMarkerDates).map(dateToDay))
+        .concat(state.meetings.map(meeting => normalizedMeetingRule(meeting).startDate).filter(isDateText).map(dateToDay))
         .filter(day => Number.isFinite(day));
     }
 
@@ -204,7 +205,15 @@
         }
       });
       if (Number.isFinite(startDay) && Number.isFinite(endDay)) {
-        if (meetingIsDaily(meeting)) {
+        const rule = normalizedMeetingRule(meeting);
+        if (rule.type !== 'none') {
+          expandMeetingScheduleRule(rule, startDay, endDay).forEach(date => {
+            if (!seen.has(date)) {
+              seen.add(date);
+              result.push(date);
+            }
+          });
+        } else if (meetingIsDaily(meeting)) {
           for (let day = startDay; day <= endDay; day += 1) {
             const date = dayToDate(day);
             if (!seen.has(date)) {
@@ -227,6 +236,47 @@
         }
       }
       return result.sort();
+    }
+
+    function expandMeetingScheduleRule(rule, startDay, endDay) {
+      const result = [];
+      const anchorDay = dateToDay(rule.startDate);
+      const fromDay = Math.max(startDay, anchorDay);
+      const untilDay = Math.min(endDay, rule.endDate ? dateToDay(rule.endDate) : endDay);
+      if (!Number.isFinite(anchorDay) || !Number.isFinite(fromDay) || !Number.isFinite(untilDay) || fromDay > untilDay) {
+        return result;
+      }
+      if (rule.type === 'daily') {
+        const interval = Math.max(1, Number(rule.interval) || 1);
+        for (let day = fromDay; day <= untilDay; day += 1) {
+          if ((day - anchorDay) % interval === 0) result.push(dayToDate(day));
+        }
+        return result;
+      }
+      if (rule.type === 'weekly') {
+        const interval = Math.max(1, Number(rule.interval) || 1);
+        const anchorWeek = weekStartDay(anchorDay);
+        for (let day = fromDay; day <= untilDay; day += 1) {
+          if (weekdayOfDay(day) !== rule.weekday) continue;
+          const diffWeeks = Math.floor((weekStartDay(day) - anchorWeek) / 7);
+          if (diffWeeks >= 0 && diffWeeks % interval === 0) result.push(dayToDate(day));
+        }
+        return result;
+      }
+      const anchorMonth = monthStartDay(anchorDay);
+      const firstMonth = monthStartDay(fromDay);
+      const lastMonth = monthStartDay(untilDay);
+      for (let month = firstMonth; month <= lastMonth; month = shiftMonthDay(month, 1)) {
+        const diffMonths = monthDiff(anchorMonth, month);
+        if (diffMonths < 0 || diffMonths % Math.max(1, Number(rule.interval) || 1) !== 0) continue;
+        const candidate = rule.type === 'monthlyDate'
+          ? dateForMonthDay(month, rule.dayOfMonth)
+          : nthWeekdayOfMonthDay(month, rule.nth, rule.weekday);
+        if (Number.isFinite(candidate) && candidate >= fromDay && candidate <= untilDay) {
+          result.push(dayToDate(candidate));
+        }
+      }
+      return result;
     }
 
     function meetingExplicitMarkerDates(meeting) {
@@ -272,6 +322,35 @@
 
     function weekdayOfDay(day) {
       return new Date(day * 86400000).getUTCDay();
+    }
+
+    function weekStartDay(day) {
+      return day - weekdayOfDay(day);
+    }
+
+    function monthDiff(startMonthDay, currentMonthDay) {
+      const start = new Date(monthStartDay(startMonthDay) * 86400000);
+      const current = new Date(monthStartDay(currentMonthDay) * 86400000);
+      return (current.getUTCFullYear() - start.getUTCFullYear()) * 12 + current.getUTCMonth() - start.getUTCMonth();
+    }
+
+    function dateForMonthDay(monthDay, dayOfMonth) {
+      const month = new Date(monthStartDay(monthDay) * 86400000);
+      const candidate = new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth(), Number(dayOfMonth) || 1));
+      if (candidate.getUTCMonth() !== month.getUTCMonth()) return NaN;
+      return Math.floor(candidate.getTime() / 86400000);
+    }
+
+    function nthWeekdayOfMonthDay(monthDay, nth, weekday) {
+      const first = monthStartDay(monthDay);
+      if (Number(nth) === -1) {
+        const last = shiftMonthDay(first, 1) - 1;
+        const delta = (weekdayOfDay(last) - weekday + 7) % 7;
+        return last - delta;
+      }
+      const firstDelta = (weekday - weekdayOfDay(first) + 7) % 7;
+      const candidate = first + firstDelta + (Math.max(1, Math.floor(Number(nth) || 1)) - 1) * 7;
+      return monthStartDay(candidate) === first ? candidate : NaN;
     }
 
     function isDateText(value) {

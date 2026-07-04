@@ -18,13 +18,182 @@
       ];
     }
 
-    function meetingScheduleOptions(selected) {
-      const presets = ['毎日', '毎週月曜日', '毎週火曜日', '毎週水曜日', '毎週木曜日', '毎週金曜日', '毎週土曜日', '毎週日曜日'];
-      const options = [{ value: '', label: '指定なし' }].concat(presets.map(value => ({ value, label: value })));
-      if (selected && !options.some(option => option.value === selected)) {
-        options.push({ value: selected, label: selected });
+    function meetingRuleTypeOptions() {
+      return [
+        { value: 'none', label: '指定なし' },
+        { value: 'daily', label: '毎日' },
+        { value: 'weekly', label: '毎週' },
+        { value: 'biweekly', label: '隔週' },
+        { value: 'monthlyDate', label: '毎月(日付)' },
+        { value: 'monthlyNth', label: '毎月(曜日)' }
+      ];
+    }
+
+    function meetingDayOfMonthOptions() {
+      return Array.from({ length: 31 }, (_, index) => {
+        const value = String(index + 1);
+        return { value, label: `${value}日` };
+      });
+    }
+
+    function meetingNthOptions() {
+      return [
+        { value: '1', label: '第1' },
+        { value: '2', label: '第2' },
+        { value: '3', label: '第3' },
+        { value: '4', label: '第4' },
+        { value: '5', label: '第5' },
+        { value: '-1', label: '最終' }
+      ];
+    }
+
+    function meetingWeekdayOptions() {
+      return ['日', '月', '火', '水', '木', '金', '土'].map((label, index) => ({
+        value: String(index),
+        label: `${label}曜日`
+      }));
+    }
+
+    function defaultMeetingDraftFields() {
+      return {
+        meetingId: '',
+        name: '',
+        schedule: '',
+        ruleType: 'none',
+        startDate: '',
+        endDate: '',
+        dayOfMonth: '',
+        nth: '1',
+        weekday: '',
+        note: ''
+      };
+    }
+
+    function meetingDraftFromMeeting(meeting) {
+      const rule = normalizedMeetingRule(meeting);
+      const draft = Object.assign(defaultMeetingDraftFields(), {
+        meetingId: meeting.id,
+        name: meeting.name,
+        schedule: meeting.schedule || '',
+        note: meeting.note || '',
+        startDate: meeting.startDate || rule.startDate || '',
+        endDate: meeting.endDate || rule.endDate || ''
+      });
+      if (rule.type === 'daily') {
+        draft.ruleType = 'daily';
+      } else if (rule.type === 'weekly') {
+        draft.ruleType = Number(rule.interval) === 2 ? 'biweekly' : 'weekly';
+        draft.weekday = String(rule.weekday);
+      } else if (rule.type === 'monthlyDate') {
+        draft.ruleType = 'monthlyDate';
+        draft.dayOfMonth = String(rule.dayOfMonth);
+      } else if (rule.type === 'monthlyNth') {
+        draft.ruleType = 'monthlyNth';
+        draft.nth = String(rule.nth);
+        draft.weekday = String(rule.weekday);
       }
-      return options;
+      if (draft.startDate) {
+        const weekday = weekdayOfDateText(draft.startDate);
+        if (draft.ruleType === 'weekly' || draft.ruleType === 'biweekly') draft.weekday = String(weekday);
+        if (draft.ruleType === 'monthlyDate' && !rule.dayOfMonth) draft.dayOfMonth = String(Number(draft.startDate.slice(8, 10)));
+      }
+      return draft;
+    }
+
+    function meetingRuleFromDraft(draft) {
+      const ruleType = draft.ruleType || 'none';
+      if (ruleType === 'none') return { type: 'none' };
+      const startDate = draft.startDate || '';
+      const endDate = draft.endDate || '';
+      const rule = {
+        type: ruleType === 'biweekly' ? 'weekly' : ruleType,
+        interval: ruleType === 'biweekly' ? 2 : 1,
+        startDate,
+        endDate
+      };
+      if (rule.type === 'weekly') {
+        rule.weekday = weekdayOfDateText(startDate);
+      } else if (rule.type === 'monthlyDate') {
+        rule.dayOfMonth = Number(draft.dayOfMonth) || Number((startDate || '').slice(8, 10)) || 1;
+      } else if (rule.type === 'monthlyNth') {
+        rule.nth = Number(draft.nth) || 1;
+        rule.weekday = Number(draft.weekday);
+        if (!Number.isFinite(rule.weekday)) rule.weekday = weekdayOfDateText(startDate);
+      }
+      return rule;
+    }
+
+    function meetingScheduleLabelFromDraft(draft) {
+      const rule = meetingRuleFromDraft(draft);
+      if (rule.type === 'none') return cleanText(draft.schedule);
+      return meetingScheduleLabelFromRule(rule);
+    }
+
+    function meetingScheduleLabelFromRule(rule) {
+      const range = rule.startDate
+        ? `（${rule.startDate.replace(/-/g, '/')}〜${rule.endDate ? rule.endDate.replace(/-/g, '/') : ''}）`
+        : '';
+      if (rule.type === 'daily') return `毎日${range}`;
+      if (rule.type === 'weekly') {
+        const prefix = Number(rule.interval) === 2 ? '隔週' : Number(rule.interval) > 2 ? `${Number(rule.interval)}週ごと` : '毎週';
+        return `${prefix}${weekdayLabel(rule.weekday)}${range}`;
+      }
+      if (rule.type === 'monthlyDate') return `毎月${Number(rule.dayOfMonth) || 1}日${range}`;
+      if (rule.type === 'monthlyNth') return `毎月${nthLabel(rule.nth)}${weekdayLabel(rule.weekday)}${range}`;
+      return '';
+    }
+
+    function meetingScheduleSummary(meeting) {
+      return meeting.schedule || meetingScheduleLabelFromRule(normalizedMeetingRule(meeting));
+    }
+
+    function normalizedMeetingRule(meeting) {
+      const raw = meeting && meeting.scheduleRule && typeof meeting.scheduleRule === 'object' ? meeting.scheduleRule : {};
+      const type = raw.type || 'none';
+      if (!['daily', 'weekly', 'monthlyDate', 'monthlyNth'].includes(type)) return { type: 'none' };
+      const startDate = meeting.startDate || raw.startDate || '';
+      const endDate = meeting.endDate || raw.endDate || '';
+      if (!isClientDateText(startDate) || (endDate && !isClientDateText(endDate))) return { type: 'none' };
+      const rule = {
+        type,
+        interval: Math.max(1, Math.floor(Number(raw.interval) || 1)),
+        startDate,
+        endDate
+      };
+      if (type === 'weekly') {
+        rule.weekday = safeWeekday(raw.weekday, weekdayOfDateText(startDate));
+      } else if (type === 'monthlyDate') {
+        rule.dayOfMonth = Math.max(1, Math.min(Math.floor(Number(raw.dayOfMonth) || Number(startDate.slice(8, 10))), 31));
+      } else if (type === 'monthlyNth') {
+        rule.nth = Number(raw.nth) === -1 ? -1 : Math.max(1, Math.min(Math.floor(Number(raw.nth) || 1), 5));
+        rule.weekday = safeWeekday(raw.weekday, weekdayOfDateText(startDate));
+      }
+      return rule;
+    }
+
+    function isClientDateText(value) {
+      const text = String(value || '');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+      const day = dateToDay(text);
+      return Number.isFinite(day) && dayToDate(day) === text;
+    }
+
+    function weekdayOfDateText(dateText) {
+      if (!isClientDateText(dateText)) return 1;
+      return new Date(dateToDay(dateText) * 86400000).getUTCDay();
+    }
+
+    function safeWeekday(value, fallback) {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) && numeric >= 0 && numeric <= 6 ? Math.floor(numeric) : fallback;
+    }
+
+    function weekdayLabel(value) {
+      return ['日曜日', '月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日'][Number(value)] || '曜日';
+    }
+
+    function nthLabel(value) {
+      return Number(value) === -1 ? '最終' : `第${Number(value) || 1}`;
     }
 
     function progressOptions() {

@@ -75,7 +75,8 @@ function upsertMeeting(payload) {
     const rows = readAll_();
     const meetingId = cleanString_(payload.meetingId);
     const name = requireName_(payload.name);
-    const schedule = cleanString_(payload.schedule);
+    const scheduleRule = normalizeMeetingScheduleRulePayload_(payload);
+    const schedule = cleanString_(payload.schedule) || meetingScheduleLabel_(scheduleRule);
     const note = cleanString_(payload.note);
     const sortOrder = payload.sortOrder !== undefined && payload.sortOrder !== null && payload.sortOrder !== ''
       ? Number(payload.sortOrder)
@@ -90,6 +91,9 @@ function upsertMeeting(payload) {
       meeting.Schedule = schedule;
       meeting.Note = note;
       meeting.SortOrder = sortOrder;
+      meeting.ScheduleRuleJson = meetingScheduleRuleJson_(scheduleRule);
+      meeting.StartDate = scheduleRule.startDate || '';
+      meeting.EndDate = scheduleRule.endDate || '';
       writeObject_(SHEET.MEETINGS, meeting);
     } else {
       const newMeetingId = cleanString_(payload.clientMeetingId);
@@ -102,7 +106,10 @@ function upsertMeeting(payload) {
         Name: name,
         Schedule: schedule,
         Note: note,
-        SortOrder: sortOrder
+        SortOrder: sortOrder,
+        ScheduleRuleJson: meetingScheduleRuleJson_(scheduleRule),
+        StartDate: scheduleRule.startDate || '',
+        EndDate: scheduleRule.endDate || ''
       });
     }
     return { ok: true, meetings: readAll_().meetings.map(clientMeeting_).sort(compareSortOrder_) };
@@ -123,6 +130,104 @@ function deleteMeeting(payload) {
     deleteRow_(SHEET.MEETINGS, meeting.__row);
     return { ok: true, meetings: readAll_().meetings.map(clientMeeting_).sort(compareSortOrder_) };
   });
+}
+
+function normalizeMeetingScheduleRulePayload_(payload) {
+  payload = payload || {};
+  const raw = payload.scheduleRule && typeof payload.scheduleRule === 'object' && !Array.isArray(payload.scheduleRule)
+    ? payload.scheduleRule
+    : {};
+  let type = cleanString_(payload.ruleType || raw.type);
+  let interval = meetingPositiveInt_(payload.interval !== undefined ? payload.interval : raw.interval, 1);
+  if (type === 'biweekly') {
+    type = 'weekly';
+    interval = 2;
+  }
+  if (['daily', 'weekly', 'monthlyDate', 'monthlyNth'].indexOf(type) === -1) {
+    return { type: 'none', interval: 0, startDate: '', endDate: '' };
+  }
+
+  const startDate = cleanString_(payload.startDate || raw.startDate);
+  if (!isValidDate_(startDate)) {
+    throw new Error('開催ルールには初回開催日を YYYY-MM-DD 形式で入力してください。');
+  }
+  const endDate = cleanString_(payload.endDate || raw.endDate);
+  if (endDate && !isValidDate_(endDate)) {
+    throw new Error('開催ルールの終了日は YYYY-MM-DD 形式で入力してください。');
+  }
+  if (endDate && endDate < startDate) {
+    throw new Error('開催ルールの終了日は初回開催日以降にしてください。');
+  }
+
+  const rule = {
+    type: type,
+    interval: type === 'weekly' ? Math.max(1, Math.min(interval, 8)) : 1,
+    startDate: startDate,
+    endDate: endDate
+  };
+  if (type === 'weekly') {
+    rule.weekday = meetingWeekdayValue_(payload.weekday !== undefined ? payload.weekday : raw.weekday, startDate);
+  } else if (type === 'monthlyDate') {
+    const startDayOfMonth = Number(startDate.slice(8, 10));
+    rule.dayOfMonth = Math.max(1, Math.min(meetingPositiveInt_(payload.dayOfMonth !== undefined ? payload.dayOfMonth : raw.dayOfMonth, startDayOfMonth), 31));
+  } else if (type === 'monthlyNth') {
+    const nth = Number(payload.nth !== undefined ? payload.nth : raw.nth);
+    rule.nth = nth === -1 ? -1 : Math.max(1, Math.min(meetingPositiveInt_(nth, 1), 5));
+    rule.weekday = meetingWeekdayValue_(payload.weekday !== undefined ? payload.weekday : raw.weekday, startDate);
+  }
+  return rule;
+}
+
+function meetingScheduleRuleJson_(rule) {
+  return rule && rule.type && rule.type !== 'none' ? JSON.stringify(rule) : '';
+}
+
+function meetingScheduleLabel_(rule) {
+  if (!rule || rule.type === 'none') {
+    return '';
+  }
+  const range = rule.startDate
+    ? '（' + meetingShortDate_(rule.startDate) + '〜' + (rule.endDate ? meetingShortDate_(rule.endDate) : '') + '）'
+    : '';
+  if (rule.type === 'daily') {
+    return '毎日' + range;
+  }
+  if (rule.type === 'weekly') {
+    const prefix = Number(rule.interval) === 2 ? '隔週' : Number(rule.interval) > 2 ? String(Number(rule.interval)) + '週ごと' : '毎週';
+    return prefix + meetingWeekdayLabel_(rule.weekday) + range;
+  }
+  if (rule.type === 'monthlyDate') {
+    return '毎月' + String(Number(rule.dayOfMonth) || 1) + '日' + range;
+  }
+  if (rule.type === 'monthlyNth') {
+    return '毎月' + meetingNthLabel_(rule.nth) + meetingWeekdayLabel_(rule.weekday) + range;
+  }
+  return '';
+}
+
+function meetingPositiveInt_(value, fallback) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : fallback;
+}
+
+function meetingWeekdayValue_(value, startDate) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric >= 0 && numeric <= 6) {
+    return Math.floor(numeric);
+  }
+  return new Date(Date.UTC(Number(startDate.slice(0, 4)), Number(startDate.slice(5, 7)) - 1, Number(startDate.slice(8, 10)))).getUTCDay();
+}
+
+function meetingWeekdayLabel_(weekday) {
+  return ['日曜日', '月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日'][Number(weekday)] || '曜日';
+}
+
+function meetingNthLabel_(nth) {
+  return Number(nth) === -1 ? '最終' : '第' + String(Number(nth) || 1);
+}
+
+function meetingShortDate_(dateText) {
+  return dateText ? dateText.replace(/-/g, '/') : '';
 }
 
 function exportWbs() {
@@ -331,6 +436,10 @@ function buildWbsDateRange_(visibleRows, derived, options, milestones, meetings)
     wbsExplicitMeetingMarkerDates_(meeting).forEach(function (date) {
       days.push(wbsDateToDay_(date));
     });
+    const rule = wbsMeetingScheduleRule_(meeting);
+    if (rule.type !== 'none' && wbsIsValidDate_(rule.startDate)) {
+      days.push(wbsDateToDay_(rule.startDate));
+    }
   });
   let startDay;
   let endDay;
@@ -1010,8 +1119,11 @@ function wbsMeetingMarkerDates_(meeting, dateRange) {
   }
 
   wbsExplicitMeetingMarkerDates_(meeting).forEach(addDate);
+  const rule = wbsMeetingScheduleRule_(meeting);
   if (dateRange && Number.isFinite(dateRange.startDay) && Number.isFinite(dateRange.endDay)) {
-    if (wbsMeetingIsDaily_(meeting)) {
+    if (rule.type !== 'none') {
+      wbsExpandMeetingScheduleRule_(rule, dateRange).forEach(addDate);
+    } else if (wbsMeetingIsDaily_(meeting)) {
       for (let day = dateRange.startDay; day <= dateRange.endDay; day += 1) {
         addDate(wbsDayToDate_(day));
       }
@@ -1027,6 +1139,94 @@ function wbsMeetingMarkerDates_(meeting, dateRange) {
     }
   }
   return result.sort();
+}
+
+function wbsMeetingScheduleRule_(meeting) {
+  const text = wbsClean_(wbsGet_(meeting, 'ScheduleRuleJson', 'scheduleRuleJson'));
+  let parsed = {};
+  if (text) {
+    try {
+      parsed = JSON.parse(text) || {};
+    } catch (error) {
+      parsed = {};
+    }
+  } else {
+    parsed = wbsGet_(meeting, 'scheduleRule', 'scheduleRule') || {};
+  }
+  const type = wbsClean_(parsed.type);
+  if (['daily', 'weekly', 'monthlyDate', 'monthlyNth'].indexOf(type) === -1) {
+    return { type: 'none' };
+  }
+  const startDate = wbsClean_(wbsGet_(meeting, 'StartDate', 'startDate')) || wbsClean_(parsed.startDate);
+  const endDate = wbsClean_(wbsGet_(meeting, 'EndDate', 'endDate')) || wbsClean_(parsed.endDate);
+  if (!wbsIsValidDate_(startDate) || (endDate && !wbsIsValidDate_(endDate))) {
+    return { type: 'none' };
+  }
+  const rule = {
+    type: type,
+    interval: Math.max(1, Math.floor(Number(parsed.interval) || 1)),
+    startDate: startDate,
+    endDate: endDate
+  };
+  if (type === 'weekly') {
+    rule.weekday = wbsSafeWeekday_(parsed.weekday, wbsWeekdayOfDay_(wbsDateToDay_(startDate)));
+  } else if (type === 'monthlyDate') {
+    rule.dayOfMonth = Math.max(1, Math.min(Math.floor(Number(parsed.dayOfMonth) || Number(startDate.slice(8, 10))), 31));
+  } else if (type === 'monthlyNth') {
+    const nth = Number(parsed.nth);
+    rule.nth = nth === -1 ? -1 : Math.max(1, Math.min(Math.floor(nth || 1), 5));
+    rule.weekday = wbsSafeWeekday_(parsed.weekday, wbsWeekdayOfDay_(wbsDateToDay_(startDate)));
+  }
+  return rule;
+}
+
+function wbsExpandMeetingScheduleRule_(rule, dateRange) {
+  const result = [];
+  const startDay = Math.max(dateRange.startDay, wbsDateToDay_(rule.startDate));
+  const endDay = Math.min(dateRange.endDay, rule.endDate ? wbsDateToDay_(rule.endDate) : dateRange.endDay);
+  if (!Number.isFinite(startDay) || !Number.isFinite(endDay) || startDay > endDay) {
+    return result;
+  }
+  const anchorDay = wbsDateToDay_(rule.startDate);
+  if (rule.type === 'daily') {
+    const interval = Math.max(1, Number(rule.interval) || 1);
+    for (let day = startDay; day <= endDay; day += 1) {
+      if ((day - anchorDay) % interval === 0) {
+        result.push(wbsDayToDate_(day));
+      }
+    }
+    return result;
+  }
+  if (rule.type === 'weekly') {
+    const interval = Math.max(1, Number(rule.interval) || 1);
+    const anchorWeek = wbsWeekStartDay_(anchorDay);
+    for (let day = startDay; day <= endDay; day += 1) {
+      if (wbsWeekdayOfDay_(day) !== rule.weekday) {
+        continue;
+      }
+      const diffWeeks = Math.floor((wbsWeekStartDay_(day) - anchorWeek) / 7);
+      if (diffWeeks >= 0 && diffWeeks % interval === 0) {
+        result.push(wbsDayToDate_(day));
+      }
+    }
+    return result;
+  }
+  const anchorMonth = wbsMonthStartDay_(anchorDay);
+  const firstMonth = wbsMonthStartDay_(startDay);
+  const lastMonth = wbsMonthStartDay_(endDay);
+  for (let month = firstMonth; month <= lastMonth; month = wbsAddMonths_(month, 1)) {
+    const diffMonths = wbsMonthDiff_(anchorMonth, month);
+    if (diffMonths < 0 || diffMonths % Math.max(1, Number(rule.interval) || 1) !== 0) {
+      continue;
+    }
+    const candidate = rule.type === 'monthlyDate'
+      ? wbsDateForMonthDay_(month, rule.dayOfMonth)
+      : wbsNthWeekdayOfMonthDay_(month, rule.nth, rule.weekday);
+    if (Number.isFinite(candidate) && candidate >= startDay && candidate <= endDay) {
+      result.push(wbsDayToDate_(candidate));
+    }
+  }
+  return result;
 }
 
 function wbsExplicitMeetingMarkerDates_(meeting) {
@@ -1086,6 +1286,53 @@ function wbsMeetingRecurrenceWeekday_(meeting) {
 
 function wbsWeekdayOfDay_(day) {
   return new Date(day * 86400000).getUTCDay();
+}
+
+function wbsSafeWeekday_(value, fallback) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 && numeric <= 6 ? Math.floor(numeric) : fallback;
+}
+
+function wbsWeekStartDay_(day) {
+  return day - wbsWeekdayOfDay_(day);
+}
+
+function wbsMonthStartDay_(day) {
+  const date = new Date(day * 86400000);
+  return Math.floor(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1) / 86400000);
+}
+
+function wbsAddMonths_(monthDay, deltaMonths) {
+  const date = new Date(wbsMonthStartDay_(monthDay) * 86400000);
+  return Math.floor(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + deltaMonths, 1) / 86400000);
+}
+
+function wbsMonthDiff_(startMonthDay, currentMonthDay) {
+  const start = new Date(wbsMonthStartDay_(startMonthDay) * 86400000);
+  const current = new Date(wbsMonthStartDay_(currentMonthDay) * 86400000);
+  return (current.getUTCFullYear() - start.getUTCFullYear()) * 12 + current.getUTCMonth() - start.getUTCMonth();
+}
+
+function wbsDateForMonthDay_(monthDay, dayOfMonth) {
+  const month = new Date(wbsMonthStartDay_(monthDay) * 86400000);
+  const candidate = new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth(), Number(dayOfMonth) || 1));
+  if (candidate.getUTCMonth() !== month.getUTCMonth()) {
+    return NaN;
+  }
+  return Math.floor(candidate.getTime() / 86400000);
+}
+
+function wbsNthWeekdayOfMonthDay_(monthDay, nth, weekday) {
+  const first = wbsMonthStartDay_(monthDay);
+  if (Number(nth) === -1) {
+    const nextMonth = wbsAddMonths_(first, 1);
+    const last = nextMonth - 1;
+    const delta = (wbsWeekdayOfDay_(last) - weekday + 7) % 7;
+    return last - delta;
+  }
+  const firstDelta = (weekday - wbsWeekdayOfDay_(first) + 7) % 7;
+  const candidate = first + firstDelta + (Math.max(1, Math.floor(Number(nth) || 1)) - 1) * 7;
+  return wbsMonthStartDay_(candidate) === first ? candidate : NaN;
 }
 
 function wbsA1_(row, col) {

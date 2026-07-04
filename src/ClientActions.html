@@ -442,7 +442,7 @@
 
     function defaultProjectSettingsDraft(tab) {
       return tab === 'meetings'
-        ? { meetingId: '', name: '', schedule: '', note: '' }
+        ? defaultMeetingDraftFields()
         : { milestoneId: '', name: '', date: '', note: '' };
     }
 
@@ -470,12 +470,7 @@
       const meeting = state.meetings.find(item => item.id === meetingId);
       if (!meeting || !state.dialog || state.dialog.type !== 'projectSettings') return;
       state.projectSettingsTab = 'meetings';
-      state.dialog.draft = {
-        meetingId: meeting.id,
-        name: meeting.name,
-        schedule: meeting.schedule || '',
-        note: meeting.note || ''
-      };
+      state.dialog.draft = meetingDraftFromMeeting(meeting);
       render();
     }
 
@@ -532,12 +527,25 @@
         showToast('名称を入力', 'error');
         return;
       }
+      const scheduleRule = meetingRuleFromDraft(draft);
+      if (scheduleRule.type !== 'none' && !isClientDateText(scheduleRule.startDate)) {
+        showToast('初回開催日を入力', 'error');
+        return;
+      }
+      if (scheduleRule.type !== 'none' && scheduleRule.endDate && scheduleRule.endDate < scheduleRule.startDate) {
+        showToast('終了日は初回開催日以降にしてください', 'error');
+        return;
+      }
       const previous = cloneValue(state.meetings);
       const meetingId = draft.meetingId || newClientId('meeting');
+      const schedule = meetingScheduleLabelFromDraft(draft);
       const optimistic = {
         id: meetingId,
         name: cleanText(draft.name),
-        schedule: cleanText(draft.schedule),
+        schedule,
+        scheduleRule,
+        startDate: scheduleRule.startDate || '',
+        endDate: scheduleRule.endDate || '',
         note: cleanText(draft.note),
         sortOrder: draft.meetingId ? (state.meetings.find(item => item.id === draft.meetingId) || {}).sortOrder || 0 : nextLocalSortOrder(state.meetings)
       };
@@ -545,7 +553,11 @@
         meetingId: draft.meetingId,
         clientMeetingId: draft.meetingId ? '' : meetingId,
         name: draft.name,
-        schedule: draft.schedule,
+        schedule,
+        scheduleRule,
+        ruleType: draft.ruleType,
+        startDate: scheduleRule.startDate || '',
+        endDate: scheduleRule.endDate || '',
         note: draft.note,
         sortOrder: optimistic.sortOrder
       }, () => {

@@ -575,9 +575,10 @@
             <input class="input" data-draft-scope="projectSettings" data-draft-field="name" value="${h(draft.name)}">
           </label>
           <label class="field">
-            <span class="field-label">開催ルール</span>
-            ${renderDropdown({ scope: 'projectSettings', field: 'schedule', selected: draft.schedule, options: meetingScheduleOptions(draft.schedule) })}
+            <span class="field-label">開催頻度</span>
+            ${renderDropdown({ scope: 'projectSettings', field: 'ruleType', selected: draft.ruleType || 'none', options: meetingRuleTypeOptions() })}
           </label>
+          ${renderMeetingScheduleRuleFields(draft)}
           <label class="field wide">
             <span class="field-label">備考</span>
             <input class="input" data-draft-scope="projectSettings" data-draft-field="note" value="${h(draft.note)}">
@@ -590,6 +591,37 @@
         <div class="drawer-section">
           <div class="member-list">${state.meetings.map(item => renderMeetingRow(item, submitting)).join('') || '<div class="meta-line">なし</div>'}</div>
         </div>
+      `;
+    }
+
+    function renderMeetingScheduleRuleFields(draft) {
+      const type = draft.ruleType || 'none';
+      if (type === 'none') return '';
+      return `
+        <label class="field">
+          <span class="field-label">初回開催日</span>
+          ${renderDatePicker({ scope: 'projectSettings', field: 'startDate', selected: draft.startDate, endDate: draft.endDate, placeholder: '未設定' })}
+        </label>
+        <label class="field">
+          <span class="field-label">終了日</span>
+          ${renderDatePicker({ scope: 'projectSettings', field: 'endDate', selected: draft.endDate, startDate: draft.startDate, minDate: draft.startDate, placeholder: '任意' })}
+        </label>
+        ${type === 'monthlyDate' ? `
+          <label class="field">
+            <span class="field-label">毎月日</span>
+            ${renderDropdown({ scope: 'projectSettings', field: 'dayOfMonth', selected: String(draft.dayOfMonth || (draft.startDate ? Number(draft.startDate.slice(8, 10)) : '1')), options: meetingDayOfMonthOptions() })}
+          </label>
+        ` : ''}
+        ${type === 'monthlyNth' ? `
+          <label class="field">
+            <span class="field-label">第</span>
+            ${renderDropdown({ scope: 'projectSettings', field: 'nth', selected: String(draft.nth || '1'), options: meetingNthOptions() })}
+          </label>
+          <label class="field">
+            <span class="field-label">曜日</span>
+            ${renderDropdown({ scope: 'projectSettings', field: 'weekday', selected: String(draft.weekday || (draft.startDate ? weekdayOfDateText(draft.startDate) : '1')), options: meetingWeekdayOptions() })}
+          </label>
+        ` : ''}
       `;
     }
 
@@ -613,7 +645,7 @@
         <div class="member-row">
           <div class="member-main">
             <div class="member-name"><span>${h(meeting.name)}</span></div>
-            <div class="member-email">${h(meeting.schedule || '')}${meeting.note ? ` · ${h(meeting.note)}` : ''}</div>
+            <div class="member-email">${h(meetingScheduleSummary(meeting) || '')}${meeting.note ? ` · ${h(meeting.note)}` : ''}</div>
           </div>
           <div class="inline-actions">
             <button class="button secondary compact" data-action="edit-meeting" data-meeting-id="${h(meeting.id)}" ${submitting ? 'disabled' : ''}>編集</button>

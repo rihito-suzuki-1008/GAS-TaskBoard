@@ -115,6 +115,51 @@ test('template places milestones and dated meetings on gantt rows', () => {
   assert.equal(model.values[model.layout.meetingBodyStartRow - 1][model.layout.ganttStartCol + meetingDateIndex - 1], '▼');
 });
 
+test('recurring meeting rules expand biweekly and monthly occurrences', () => {
+  const rows = baseRows();
+  rows.nodes = [
+    { NodeId: 'root', ParentId: '', Name: '案件', StatusColumnId: 'todo', SortOrder: 1000 },
+    { NodeId: 'phase', ParentId: 'root', Name: 'Phase', StatusColumnId: 'todo', SortOrder: 1000, StartDate: '2026-07-01', EndDate: '2026-08-20' },
+    { NodeId: 'task', ParentId: 'phase', Name: 'Task', StatusColumnId: 'todo', SortOrder: 1000, StartDate: '2026-07-01', EndDate: '2026-08-20' }
+  ];
+  rows.meetings = [
+    {
+      MeetingId: 'mt-biweekly',
+      Name: '隔週会',
+      Schedule: '隔週金曜日',
+      ScheduleRuleJson: JSON.stringify({ type: 'weekly', interval: 2, startDate: '2026-07-03', endDate: '', weekday: 5 }),
+      StartDate: '2026-07-03',
+      EndDate: '',
+      SortOrder: 1000
+    },
+    {
+      MeetingId: 'mt-monthly',
+      Name: '月次会',
+      Schedule: '毎月第2火曜日',
+      ScheduleRuleJson: JSON.stringify({ type: 'monthlyNth', interval: 1, startDate: '2026-07-14', endDate: '', nth: 2, weekday: 2 }),
+      StartDate: '2026-07-14',
+      EndDate: '',
+      SortOrder: 2000
+    }
+  ];
+  const model = buildWbsModel_(rows, {
+    actorName: '佐藤',
+    now: '2026-07-03T00:00:00.000Z',
+    createdAt: '2026-07-03T00:00:00.000Z',
+    version: 1
+  });
+  const cell = (sheetRow, dateText) => {
+    const index = model.dateColumns.findIndex(date => date.date === dateText);
+    assert.notEqual(index, -1);
+    return model.values[sheetRow - 1][model.layout.ganttStartCol + index - 1];
+  };
+  assert.equal(cell(model.layout.meetingBodyStartRow, '2026-07-03'), '▼');
+  assert.equal(cell(model.layout.meetingBodyStartRow, '2026-07-10'), '');
+  assert.equal(cell(model.layout.meetingBodyStartRow, '2026-07-17'), '▼');
+  assert.equal(cell(model.layout.meetingBodyStartRow + 1, '2026-07-14'), '▼');
+  assert.equal(cell(model.layout.meetingBodyStartRow + 1, '2026-08-11'), '▼');
+});
+
 test('deriveActuals uses first activity and last done snapshot only for current 100%', () => {
   const logs = [
     { NodeId: 'n1', Field: 'progress', NewValue: 30, NewValueIsDone: false, ChangedAt: '2026-07-02T01:00:00.000Z' },
